@@ -1,0 +1,16 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "panels": [
+    {"type":"timeseries","title":"Requests / sec","gridPos":{"h":8,"w":12,"x":0,"y":0},"targets":[{"expr":"sum(rate(gatego_requests_total[1m])) by (route, status)","legendFormat":"{{route}} {{status}}"}]},
+    {"type":"timeseries","title":"p95 latency","gridPos":{"h":8,"w":12,"x":12,"y":0},"targets":[{"expr":"histogram_quantile(0.95, sum(rate(gatego_request_duration_seconds_bucket[5m])) by (le, route))","legendFormat":"{{route}}"}]},
+    {"type":"stat","title":"Backend health","gridPos":{"h":8,"w":24,"x":0,"y":8},"targets":[{"expr":"gatego_backend_healthy","legendFormat":"{{route}} / {{backend}}"}]}
+  ],
+  "schemaVersion": 39,
+  "tags": ["gatego", "gateway"],
+  "templating": {"list": []},
+  "time": {"from":"now-15m","to":"now"},
+  "title": "GateGo Overview",
+  "uid": "gatego-overview",
+  "version": 1
+}
