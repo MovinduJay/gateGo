@@ -1,0 +1,8 @@
+project_id    = "your-gcp-project"
+region        = "asia-southeast1"
+gateway_image = "asia-southeast1-docker.pkg.dev/your-gcp-project/gatego/gateway:latest"
+demo_image    = "asia-southeast1-docker.pkg.dev/your-gcp-project/gatego/demo:latest"
+jwt_secret    = "replace-with-a-long-random-secret"
+admin_key     = "replace-with-a-long-random-admin-key"
+# redis_addr = "rediss://your-redis-host:6379/0"
+# redis_password = "..."
