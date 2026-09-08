@@ -1,0 +1,10 @@
+/bin/
+*.exe
+*.test
+*.out
+.env
+.idea/
+.vscode/
+.DS_Store
+terraform.tfstate*
+.terraform/
