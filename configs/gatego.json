@@ -1,0 +1,57 @@
+{
+  "server": {
+    "listen": ":8080",
+    "read_header_timeout": "5s",
+    "idle_timeout": "60s",
+    "shutdown_timeout": "10s",
+    "max_request_body_bytes": 2097152
+  },
+  "health": {
+    "interval": "3s",
+    "timeout": "1s",
+    "failure_threshold": 2,
+    "success_threshold": 1
+  },
+  "observability": { "service_name": "gatego" },
+  "routes": [
+    {
+      "name": "public-api",
+      "path_prefix": "/public",
+      "methods": ["GET", "POST"],
+      "auth_required": false,
+      "rate_limit": { "requests_per_second": 50000, "burst": 100000 },
+      "timeout": "2s",
+      "retries": 2,
+      "backends": [
+        { "url": "http://backend-a:9001", "weight": 3, "health_path": "/healthz" },
+        { "url": "http://backend-b:9002", "weight": 1, "health_path": "/healthz" }
+      ]
+    },
+    {
+      "name": "limited-demo",
+      "path_prefix": "/limited",
+      "methods": ["GET"],
+      "auth_required": false,
+      "rate_limit": { "requests_per_second": 5, "burst": 10 },
+      "timeout": "2s",
+      "retries": 1,
+      "backends": [
+        { "url": "http://backend-a:9001", "weight": 1, "health_path": "/healthz" }
+      ]
+    },
+    {
+      "name": "protected-api",
+      "path_prefix": "/api",
+      "methods": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+      "auth_required": true,
+      "rate_limit": { "requests_per_second": 50, "burst": 100 },
+      "timeout": "3s",
+      "retries": 2,
+      "backends": [
+        { "url": "http://backend-a:9001", "weight": 2, "health_path": "/healthz" },
+        { "url": "http://backend-b:9002", "weight": 1, "health_path": "/healthz" },
+        { "url": "http://backend-c:9003", "weight": 1, "health_path": "/healthz" }
+      ]
+    }
+  ]
+}
