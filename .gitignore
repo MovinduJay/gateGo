@@ -1,4 +1,5 @@
 /bin/
+/benchmark-results/
 *.exe
 *.test
 *.out
