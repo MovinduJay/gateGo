@@ -52,6 +52,7 @@ func main() {
 	}
 	defer gw.Close()
 	go gw.HealthChecker().Run(ctx)
+	go gw.WatchConfig(ctx, cfg.Server.ConfigReloadInterval.Std())
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", m)

@@ -13,6 +13,19 @@ const (
 	HalfOpen
 )
 
+func (s State) String() string {
+	switch s {
+	case Closed:
+		return "closed"
+	case Open:
+		return "open"
+	case HalfOpen:
+		return "half_open"
+	default:
+		return "unknown"
+	}
+}
+
 type Breaker struct {
 	mu               sync.Mutex
 	state            State

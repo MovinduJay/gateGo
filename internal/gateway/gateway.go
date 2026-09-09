@@ -16,6 +16,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -49,6 +50,8 @@ type Gateway struct {
 	logger         *slog.Logger
 	adminKey       string
 	trustForwarded bool
+	reloadMu       sync.Mutex
+	configModTime  time.Time
 }
 
 func New(configPath string, cfg *config.Config, jwtSecret, adminKey string, redisLimiter *ratelimit.RedisLimiter, m *metrics.Metrics, logger *slog.Logger) (*Gateway, error) {
@@ -88,6 +91,8 @@ func buildRouteSet(cfg *config.Config) (*routeSet, error) {
 }
 
 func (g *Gateway) Reload() error {
+	g.reloadMu.Lock()
+	defer g.reloadMu.Unlock()
 	cfg, err := config.Load(g.configPath)
 	if err != nil {
 		return err
@@ -97,8 +102,46 @@ func (g *Gateway) Reload() error {
 		return err
 	}
 	g.routes.Store(set)
+	if info, statErr := os.Stat(g.configPath); statErr == nil {
+		g.configModTime = info.ModTime()
+	}
 	g.logger.Info("configuration reloaded", "routes", len(set.Routes))
 	return nil
+}
+
+// WatchConfig reloads an on-disk configuration atomically whenever it changes.
+// A failed reload leaves the last known-good route set active.
+func (g *Gateway) WatchConfig(ctx context.Context, interval time.Duration) {
+	if g.configPath == "" || strings.TrimSpace(os.Getenv("GATEGO_CONFIG_JSON")) != "" || interval <= 0 {
+		return
+	}
+	if info, err := os.Stat(g.configPath); err == nil {
+		g.reloadMu.Lock()
+		g.configModTime = info.ModTime()
+		g.reloadMu.Unlock()
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			info, err := os.Stat(g.configPath)
+			if err != nil {
+				continue
+			}
+			g.reloadMu.Lock()
+			changed := info.ModTime().After(g.configModTime)
+			g.reloadMu.Unlock()
+			if !changed {
+				continue
+			}
+			if err := g.Reload(); err != nil {
+				g.logger.Error("automatic config reload failed; keeping last known-good config", "error", err)
+			}
+		}
+	}
 }
 
 func (g *Gateway) HealthChecker() *health.Checker {
@@ -216,6 +259,29 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 		g.respondJSON(w, http.StatusOK, map[string]any{"status": "reloaded"})
+		return true
+	case "/admin/backends":
+		if r.Method != http.MethodGet {
+			g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "GET required"})
+			return true
+		}
+		if g.adminKey == "" || r.Header.Get("X-Admin-Key") != g.adminKey {
+			g.respondJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return true
+		}
+		type backendState struct {
+			Route   string `json:"route"`
+			URL     string `json:"url"`
+			Circuit string `json:"circuit"`
+			Healthy bool   `json:"healthy"`
+		}
+		states := []backendState{}
+		for _, route := range g.routes.Load().Routes {
+			for _, backend := range route.Balancer.Backends() {
+				states = append(states, backendState{Route: route.Config.Name, URL: backend.URL.String(), Healthy: backend.Healthy.Load(), Circuit: backend.Breaker.State().String()})
+			}
+		}
+		g.respondJSON(w, http.StatusOK, states)
 		return true
 	}
 	return false
@@ -399,7 +465,7 @@ func retrySafe(r *http.Request) bool {
 }
 
 func retryableStatus(code int) bool {
-	return code == http.StatusBadGateway || code == http.StatusServiceUnavailable || code == http.StatusGatewayTimeout
+	return code == http.StatusInternalServerError || code == http.StatusBadGateway || code == http.StatusServiceUnavailable || code == http.StatusGatewayTimeout
 }
 
 func sleepBackoff(ctx context.Context, attempt int) bool {

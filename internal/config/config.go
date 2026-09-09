@@ -38,11 +38,12 @@ type Config struct {
 	Routes        []RouteConfig       `json:"routes"`
 }
 type ServerConfig struct {
-	Listen              string   `json:"listen"`
-	ReadHeaderTimeout   Duration `json:"read_header_timeout"`
-	IdleTimeout         Duration `json:"idle_timeout"`
-	ShutdownTimeout     Duration `json:"shutdown_timeout"`
-	MaxRequestBodyBytes int64    `json:"max_request_body_bytes"`
+	Listen               string   `json:"listen"`
+	ReadHeaderTimeout    Duration `json:"read_header_timeout"`
+	IdleTimeout          Duration `json:"idle_timeout"`
+	ShutdownTimeout      Duration `json:"shutdown_timeout"`
+	ConfigReloadInterval Duration `json:"config_reload_interval"`
+	MaxRequestBodyBytes  int64    `json:"max_request_body_bytes"`
 }
 type HealthConfig struct {
 	Interval         Duration `json:"interval"`
@@ -112,6 +113,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Server.ShutdownTimeout == 0 {
 		cfg.Server.ShutdownTimeout = Duration(10 * time.Second)
+	}
+	if cfg.Server.ConfigReloadInterval == 0 {
+		cfg.Server.ConfigReloadInterval = Duration(2 * time.Second)
 	}
 	if cfg.Server.MaxRequestBodyBytes == 0 {
 		cfg.Server.MaxRequestBodyBytes = 2 << 20
