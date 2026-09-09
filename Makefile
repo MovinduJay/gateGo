@@ -1,4 +1,4 @@
-.PHONY: test build run token compose-up compose-down observe load
+.PHONY: test build run token compose-up compose-down observe load benchmark resilience
 
 test:
 	go test ./... -count=1
@@ -27,3 +27,9 @@ observe:
 
 load:
 	go run ./cmd/loadgen -url http://localhost:8080/public/echo -c 50 -d 10s
+
+benchmark:
+	powershell -ExecutionPolicy Bypass -File scripts/benchmark.ps1
+
+resilience:
+	powershell -ExecutionPolicy Bypass -File scripts/resilience.ps1
