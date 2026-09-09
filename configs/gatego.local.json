@@ -4,6 +4,7 @@
     "read_header_timeout": "5s",
     "idle_timeout": "60s",
     "shutdown_timeout": "10s",
+	"config_reload_interval": "2s",
     "max_request_body_bytes": 2097152
   },
   "health": {
@@ -24,7 +25,20 @@
       "retries": 2,
       "backends": [
         { "url": "http://localhost:9001", "weight": 3, "health_path": "/healthz" },
-        { "url": "http://localhost:9002", "weight": 1, "health_path": "/healthz" }
+        { "url": "http://localhost:9002", "weight": 1, "health_path": "/healthz" },
+        { "url": "http://localhost:9003", "weight": 1, "health_path": "/healthz" }
+      ]
+    },
+    {
+      "name": "global-limit-demo",
+      "path_prefix": "/global-limit",
+      "methods": ["GET"],
+      "auth_required": false,
+      "rate_limit": { "requests_per_second": 0.1, "burst": 10 },
+      "timeout": "2s",
+      "retries": 1,
+      "backends": [
+        { "url": "http://localhost:9001", "weight": 1, "health_path": "/healthz" }
       ]
     },
     {

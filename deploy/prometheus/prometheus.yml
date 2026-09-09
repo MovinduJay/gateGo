@@ -3,4 +3,4 @@ global:
 scrape_configs:
   - job_name: gatego
     static_configs:
-      - targets: ["gatego:8080"]
+      - targets: ["gatego-1:8080", "gatego-2:8080"]

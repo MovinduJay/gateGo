@@ -16,7 +16,6 @@ services:
     environment:
       BACKEND_NAME: backend-b
       PORT: "9002"
-      FAIL_RATE: "0.10"
     ports:
       - "9002:9002"
 
@@ -36,7 +35,7 @@ services:
     ports:
       - "6379:6379"
 
-  gatego:
+  gatego-1:
     build:
       context: .
       dockerfile: Dockerfile
@@ -54,10 +53,28 @@ services:
     ports:
       - "8080:8080"
 
+  gatego-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - backend-a
+      - backend-b
+      - backend-c
+      - redis
+    environment:
+      GATEGO_JWT_SECRET: dev-only-change-me
+      GATEGO_ADMIN_KEY: dev-admin-key
+      GATEGO_REDIS_ADDR: redis:6379
+    volumes:
+      - ./configs/gatego.json:/configs/gatego.json:ro
+    ports:
+      - "8081:8080"
+
   prometheus:
     image: prom/prometheus:v3.1.0
     profiles: ["observability"]
-    depends_on: [gatego]
+    depends_on: [gatego-1, gatego-2]
     volumes:
       - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
