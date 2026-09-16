@@ -21,6 +21,15 @@ docker compose up -d --build
 
 GateGo #1 listens on port 8080 and GateGo #2 on port 8081. Both use the same Redis instance, so `/global-limit` has one global token bucket rather than a separate allowance per gateway.
 
+Prometheus and Grafana are available with the observability profile. The OpenTelemetry Collector receives OTLP/HTTP traces and prints a basic export summary:
+
+```powershell
+docker compose --profile observability up -d --build
+docker compose logs -f otel-collector
+```
+
+Prometheus is exposed on port 9090 and Grafana on port 3000. Outside Compose, set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable trace export; W3C trace-context propagation remains active when export is disabled.
+
 ## Configuration and service discovery
 
 Backends are addressed by DNS names in `configs/gatego.json`; Docker, Kubernetes, or another service registry supplies the current endpoint behind each name. GateGo also polls its mounted configuration file every `server.config_reload_interval` and atomically activates valid changes. A malformed update leaves the last known-good routes active.

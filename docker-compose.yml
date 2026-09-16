@@ -35,6 +35,14 @@ services:
     ports:
       - "6379:6379"
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.119.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./deploy/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4318:4318"
+
   gatego-1:
     build:
       context: .
@@ -44,10 +52,13 @@ services:
       - backend-b
       - backend-c
       - redis
+      - otel-collector
     environment:
       GATEGO_JWT_SECRET: dev-only-change-me
       GATEGO_ADMIN_KEY: dev-admin-key
       GATEGO_REDIS_ADDR: redis:6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
     volumes:
       - ./configs/gatego.json:/configs/gatego.json:ro
     ports:
@@ -62,10 +73,13 @@ services:
       - backend-b
       - backend-c
       - redis
+      - otel-collector
     environment:
       GATEGO_JWT_SECRET: dev-only-change-me
       GATEGO_ADMIN_KEY: dev-admin-key
       GATEGO_REDIS_ADDR: redis:6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
     volumes:
       - ./configs/gatego.json:/configs/gatego.json:ro
     ports:

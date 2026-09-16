@@ -27,6 +27,7 @@ import (
 	"github.com/example/gatego/internal/metrics"
 	"github.com/example/gatego/internal/observability"
 	"github.com/example/gatego/internal/ratelimit"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 type Route struct {
@@ -69,7 +70,7 @@ func New(configPath string, cfg *config.Config, jwtSecret, adminKey string, redi
 	transport.MaxIdleConns = 256
 	transport.MaxIdleConnsPerHost = 64
 	transport.IdleConnTimeout = 90 * time.Second
-	g.client = &http.Client{Transport: transport}
+	g.client = &http.Client{Transport: otelhttp.NewTransport(transport)}
 	set, err := buildRouteSet(cfg)
 	if err != nil {
 		return nil, err

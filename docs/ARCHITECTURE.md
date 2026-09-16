@@ -41,7 +41,7 @@ With no Redis configured, each GateGo instance uses an in-memory token bucket. W
 GateGo strips caller-supplied identity headers. Forwarded IP headers are ignored by default so clients cannot bypass per-IP quotas by spoofing `X-Forwarded-For`. They can be trusted explicitly only when a known ingress sanitizes them.
 
 ### Trace context
-GateGo accepts or creates a W3C `traceparent` header and forwards it downstream. `X-Trace-ID` is returned to the caller for correlation. The project intentionally keeps tracing dependency-free; in a real deployment the next step would be exporting spans through an OpenTelemetry SDK/Collector.
+GateGo accepts W3C trace context, creates server and upstream HTTP spans, and forwards trace context downstream. `X-Trace-ID` is returned to the caller for correlation. When `OTEL_EXPORTER_OTLP_ENDPOINT` is configured, spans are batch-exported over OTLP/HTTP; otherwise propagation remains active without an exporter.
 
 ## Control path
 
