@@ -38,3 +38,9 @@ variable "redis_password" {
   default   = ""
   sensitive = true
 }
+
+variable "otel_exporter_otlp_endpoint" {
+  type        = string
+  default     = ""
+  description = "Optional OTLP/HTTP collector endpoint"
+}

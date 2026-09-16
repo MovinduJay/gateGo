@@ -12,4 +12,6 @@ terraform apply
 
 Redis is optional. Without it, GateGo automatically uses its in-process token bucket. For multiple gateway replicas, provide a Redis endpoint (`redis://` or TLS `rediss://`) so rate-limit state is shared.
 
+Set `otel_exporter_otlp_endpoint` to an OTLP/HTTP collector URL to export distributed traces. Leave it empty to keep export disabled.
+
 Cloud Run cold starts can make the first request slower because the demo deliberately uses `min_instance_count = 0` to stay friendly to free/low-cost usage.

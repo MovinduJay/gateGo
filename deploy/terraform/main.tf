@@ -168,6 +168,14 @@ resource "google_cloud_run_v2_service" "gateway" {
         name  = "GATEGO_REDIS_PASSWORD"
         value = var.redis_password
       }
+      env {
+        name  = "OTEL_EXPORTER_OTLP_ENDPOINT"
+        value = var.otel_exporter_otlp_endpoint
+      }
+      env {
+        name  = "OTEL_EXPORTER_OTLP_PROTOCOL"
+        value = "http/protobuf"
+      }
 
       resources {
         limits = {
