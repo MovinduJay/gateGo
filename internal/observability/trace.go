@@ -1,10 +1,25 @@
 package observability
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"strings"
+
+	"go.opentelemetry.io/otel/trace"
 )
+
+// RequestTrace returns the active OpenTelemetry span context when available,
+// keeping response correlation IDs and downstream propagation on one trace.
+func RequestTrace(ctx context.Context, in string) (traceparent, traceID string) {
+	spanContext := trace.SpanContextFromContext(ctx)
+	if spanContext.IsValid() {
+		flags := byte(spanContext.TraceFlags())
+		return fmt.Sprintf("00-%s-%s-%02x", spanContext.TraceID(), spanContext.SpanID(), flags), spanContext.TraceID().String()
+	}
+	return EnsureTraceparent(in)
+}
 
 func EnsureTraceparent(in string) (traceparent, traceID string) {
 	parts := strings.Split(in, "-")

@@ -188,7 +188,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := requestID(r)
 	w.Header().Set("X-Request-ID", requestID)
 	r.Header.Set("X-Request-ID", requestID)
-	traceparent, traceID := observability.EnsureTraceparent(r.Header.Get("traceparent"))
+	traceparent, traceID := observability.RequestTrace(r.Context(), r.Header.Get("traceparent"))
 	r.Header.Set("traceparent", traceparent)
 	w.Header().Set("X-Trace-ID", traceID)
 
