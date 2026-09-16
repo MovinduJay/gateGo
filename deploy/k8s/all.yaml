@@ -30,6 +30,63 @@ data:
       ]
     }
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: gatego
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch: {}
+    exporters:
+      debug:
+        verbosity: basic
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: gatego
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: otel-collector}}
+  template:
+    metadata: {labels: {app: otel-collector}}
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.119.0
+          args: ["--config=/etc/otelcol-contrib/config.yaml"]
+          ports: [{name: otlp-http, containerPort: 4318}]
+          volumeMounts: [{name: config, mountPath: /etc/otelcol-contrib, readOnly: true}]
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 256Mi}
+      volumes:
+        - name: config
+          configMap: {name: otel-collector-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: gatego
+spec:
+  selector: {app: otel-collector}
+  ports: [{name: otlp-http, port: 4318, targetPort: otlp-http}]
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -164,7 +221,12 @@ spec:
   replicas: 2
   selector: {matchLabels: {app: gatego}}
   template:
-    metadata: {labels: {app: gatego}}
+    metadata:
+      labels: {app: gatego}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8080"
     spec:
       containers:
         - name: gatego
@@ -176,6 +238,8 @@ spec:
             - name: GATEGO_ADMIN_KEY
               valueFrom: {secretKeyRef: {name: gatego-secrets, key: admin-key}}
             - {name: GATEGO_REDIS_ADDR, value: "redis:6379"}
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector:4318"}
+            - {name: OTEL_EXPORTER_OTLP_PROTOCOL, value: "http/protobuf"}
           ports: [{containerPort: 8080}]
           volumeMounts: [{name: config, mountPath: /configs, readOnly: true}]
           readinessProbe: {httpGet: {path: /readyz, port: 8080}, initialDelaySeconds: 3, periodSeconds: 5}
