@@ -18,14 +18,14 @@ type Metrics struct {
 	mu                                             sync.RWMutex
 	requests, upstreamErrors, rateLimited, retries map[string]uint64
 	retryRejected, bulkheadRejected                map[string]uint64
-	healthy, circuit                               map[string]float64
+	healthy, circuit, draining                     map[string]float64
 	durations                                      map[string]*hist
 }
 
 var bounds = []float64{.005, .01, .025, .05, .1, .25, .5, 1}
 
 func New() *Metrics {
-	return &Metrics{requests: map[string]uint64{}, upstreamErrors: map[string]uint64{}, rateLimited: map[string]uint64{}, retries: map[string]uint64{}, retryRejected: map[string]uint64{}, bulkheadRejected: map[string]uint64{}, healthy: map[string]float64{}, circuit: map[string]float64{}, durations: map[string]*hist{}}
+	return &Metrics{requests: map[string]uint64{}, upstreamErrors: map[string]uint64{}, rateLimited: map[string]uint64{}, retries: map[string]uint64{}, retryRejected: map[string]uint64{}, bulkheadRejected: map[string]uint64{}, healthy: map[string]float64{}, circuit: map[string]float64{}, draining: map[string]float64{}, durations: map[string]*hist{}}
 }
 func key(parts ...string) string { return strings.Join(parts, "\x1f") }
 func (m *Metrics) IncRequest(route, status string) {
@@ -64,6 +64,15 @@ func (m *Metrics) SetCircuitState(route, backend, state string) {
 		}
 		m.circuit[key(route, backend, candidate)] = value
 	}
+	m.mu.Unlock()
+}
+func (m *Metrics) SetDraining(route, backend string, draining bool) {
+	value := 0.0
+	if draining {
+		value = 1
+	}
+	m.mu.Lock()
+	m.draining[key(route, backend)] = value
 	m.mu.Unlock()
 }
 func (m *Metrics) Observe(route, backend string, d time.Duration) {
@@ -116,6 +125,9 @@ func (m *Metrics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, k := range sortedFloat(m.circuit) {
 		fmt.Fprintf(w, "gatego_backend_circuit_state{%s} %g\n", labels(k, "route", "backend", "state"), m.circuit[k])
+	}
+	for _, k := range sortedFloat(m.draining) {
+		fmt.Fprintf(w, "gatego_backend_draining{%s} %g\n", labels(k, "route", "backend"), m.draining[k])
 	}
 	for _, k := range sortedHist(m.durations) {
 		h := m.durations[k]

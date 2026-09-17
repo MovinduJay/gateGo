@@ -79,6 +79,8 @@ curl -X POST http://localhost:8080/admin/reload \
 
 Manual reset bypasses the normal cooldown and should be used only for deliberate incident recovery. It does not mark an actively unhealthy backend healthy; active health state remains an independent admission check.
 
+`POST /admin/backends/drain?route=<name>&backend=<url-or-host>` removes a backend from new load-balancer selections while allowing its in-flight requests to complete. `DELETE` against the same endpoint activates it again. Drain state is independent from health and circuit state, is included in `/admin/backends`, and is exported through `gatego_backend_draining`.
+
 ## Known limitations
 
 These are deliberate portfolio boundaries rather than hidden production claims:

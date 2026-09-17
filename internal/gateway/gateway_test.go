@@ -96,6 +96,70 @@ func TestCircuitAwareReadinessAndAdminReset(t *testing.T) {
 	}
 }
 
+func TestBackendDrainStopsNewTrafficAndPreservesInflight(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	backendA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/inflight" {
+			close(started)
+			<-release
+		}
+		_, _ = w.Write([]byte("a"))
+	}))
+	defer backendA.Close()
+	backendB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("b")) }))
+	defer backendB.Close()
+	cfg, err := config.Parse([]byte(`{"routes":[{"name":"api","path_prefix":"/api","backends":[{"url":"` + backendA.URL + `"},{"url":"` + backendB.URL + `"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setDrain := func(method, backend string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "http://gateway/admin/backends/drain?route=api&backend="+backend, nil)
+		req.Header.Set("X-Admin-Key", "admin")
+		rr := httptest.NewRecorder()
+		gw.ServeHTTP(rr, req)
+		return rr
+	}
+
+	inflight := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rr := httptest.NewRecorder()
+		gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://gateway/api/inflight", nil))
+		inflight <- rr
+	}()
+	<-started
+	if rr := setDrain(http.MethodPost, strings.TrimPrefix(backendA.URL, "http://")); rr.Code != http.StatusOK {
+		t.Fatalf("drain A failed: %d %s", rr.Code, rr.Body.String())
+	}
+	close(release)
+	if rr := <-inflight; rr.Code != http.StatusOK || rr.Body.String() != "a" {
+		t.Fatalf("in-flight request was interrupted: %d %q", rr.Code, rr.Body.String())
+	}
+	for i := 0; i < 10; i++ {
+		rr := httptest.NewRecorder()
+		gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://gateway/api/new", nil))
+		if rr.Code != http.StatusOK || rr.Body.String() != "b" {
+			t.Fatalf("drained backend received new request %d: %d %q", i, rr.Code, rr.Body.String())
+		}
+	}
+	if rr := setDrain(http.MethodPost, strings.TrimPrefix(backendB.URL, "http://")); rr.Code != http.StatusOK {
+		t.Fatalf("drain B failed: %d %s", rr.Code, rr.Body.String())
+	}
+	if gw.Ready() {
+		t.Fatal("gateway must not be ready when all route backends are draining")
+	}
+	if rr := setDrain(http.MethodDelete, strings.TrimPrefix(backendA.URL, "http://")); rr.Code != http.StatusOK {
+		t.Fatalf("activate A failed: %d %s", rr.Code, rr.Body.String())
+	}
+	if !gw.Ready() {
+		t.Fatal("gateway should become ready when a backend is activated")
+	}
+}
+
 func TestPathPrefixRespectsSegmentBoundary(t *testing.T) {
 	if !pathMatches("/api", "/api") || !pathMatches("/api/users", "/api") {
 		t.Fatal("expected /api route to match its segment")

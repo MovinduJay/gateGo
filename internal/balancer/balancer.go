@@ -22,6 +22,7 @@ type Backend struct {
 
 	currentWeight int
 	Healthy       atomic.Bool
+	Draining      atomic.Bool
 	failures      atomic.Int32
 	successes     atomic.Int32
 	Breaker       *circuit.Breaker
@@ -101,7 +102,7 @@ func (w *WeightedRoundRobin) Pick() (*Backend, error) {
 	total := 0
 	busy := false
 	for _, b := range w.backends {
-		if !b.Healthy.Load() || !b.Breaker.Available() {
+		if b.Draining.Load() || !b.Healthy.Load() || !b.Breaker.Available() {
 			continue
 		}
 		if len(b.bulkhead) == cap(b.bulkhead) {

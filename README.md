@@ -52,6 +52,13 @@ Invoke-WebRequest -Method Post -Headers @{"X-Admin-Key"="dev-admin-key"} "http:/
 
 `GET /readyz` is circuit-aware: it returns unavailable when any configured route has no healthy, circuit-eligible backend.
 
+Backends can be drained before maintenance without interrupting requests already in flight. `POST` begins draining and `DELETE` makes the backend eligible for new traffic again:
+
+```powershell
+Invoke-WebRequest -Method Post -Headers @{"X-Admin-Key"="dev-admin-key"} "http://localhost:8080/admin/backends/drain?route=public-api&backend=backend-b:9002"
+Invoke-WebRequest -Method Delete -Headers @{"X-Admin-Key"="dev-admin-key"} "http://localhost:8080/admin/backends/drain?route=public-api&backend=backend-b:9002"
+```
+
 ## Verification
 
 ```powershell

@@ -88,6 +88,7 @@ func (g *Gateway) initializeCircuitMetrics(set *routeSet) {
 	for _, route := range set.Routes {
 		for _, backend := range route.Balancer.Backends() {
 			g.recordCircuitState(route.Config.Name, backend)
+			g.metrics.SetDraining(route.Config.Name, backend.URL.Host, backend.Draining.Load())
 		}
 	}
 }
@@ -185,7 +186,7 @@ func (g *Gateway) Ready() bool {
 	for _, route := range set.Routes {
 		ok := false
 		for _, b := range route.Balancer.Backends() {
-			if b.Healthy.Load() && b.Breaker.Available() {
+			if !b.Draining.Load() && b.Healthy.Load() && b.Breaker.Available() {
 				ok = true
 				break
 			}
@@ -296,6 +297,7 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 			FailureThreshold int    `json:"failure_threshold"`
 			RetryAfterMS     int64  `json:"retry_after_ms"`
 			Healthy          bool   `json:"healthy"`
+			Draining         bool   `json:"draining"`
 			InFlight         int    `json:"in_flight"`
 			Capacity         int    `json:"capacity"`
 		}
@@ -303,10 +305,51 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 		for _, route := range g.routes.Load().Routes {
 			for _, backend := range route.Balancer.Backends() {
 				snapshot := backend.Breaker.Snapshot()
-				states = append(states, backendState{Route: route.Config.Name, URL: backend.URL.String(), Healthy: backend.Healthy.Load(), Circuit: snapshot.State.String(), Failures: snapshot.Failures, FailureThreshold: snapshot.FailureThreshold, RetryAfterMS: snapshot.RetryAfter.Milliseconds(), InFlight: backend.InFlight(), Capacity: backend.Capacity()})
+				states = append(states, backendState{Route: route.Config.Name, URL: backend.URL.String(), Healthy: backend.Healthy.Load(), Draining: backend.Draining.Load(), Circuit: snapshot.State.String(), Failures: snapshot.Failures, FailureThreshold: snapshot.FailureThreshold, RetryAfterMS: snapshot.RetryAfter.Milliseconds(), InFlight: backend.InFlight(), Capacity: backend.Capacity()})
 			}
 		}
 		g.respondJSON(w, http.StatusOK, states)
+		return true
+	case "/admin/backends/drain":
+		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+			g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "POST or DELETE required"})
+			return true
+		}
+		if g.adminKey == "" || r.Header.Get("X-Admin-Key") != g.adminKey {
+			g.respondJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return true
+		}
+		routeName := strings.TrimSpace(r.URL.Query().Get("route"))
+		backendName := strings.TrimSpace(r.URL.Query().Get("backend"))
+		if routeName == "" || backendName == "" {
+			g.respondJSON(w, http.StatusBadRequest, map[string]any{"error": "route and backend query parameters are required"})
+			return true
+		}
+		draining := r.Method == http.MethodPost
+		updated := false
+		for _, route := range g.routes.Load().Routes {
+			if route.Config.Name != routeName {
+				continue
+			}
+			for _, backend := range route.Balancer.Backends() {
+				if backendName != backend.URL.String() && backendName != backend.URL.Host {
+					continue
+				}
+				backend.Draining.Store(draining)
+				g.metrics.SetDraining(route.Config.Name, backend.URL.Host, draining)
+				updated = true
+			}
+		}
+		if !updated {
+			g.respondJSON(w, http.StatusNotFound, map[string]any{"error": "route or backend not found"})
+			return true
+		}
+		status := "active"
+		if draining {
+			status = "draining"
+		}
+		g.logger.Info("backend administrative state changed", "route", routeName, "backend", backendName, "status", status)
+		g.respondJSON(w, http.StatusOK, map[string]any{"status": status})
 		return true
 	case "/admin/circuits/reset":
 		if r.Method != http.MethodPost {
