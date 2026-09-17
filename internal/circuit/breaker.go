@@ -79,23 +79,27 @@ func (b *Breaker) Allow() bool {
 	return true
 }
 
-func (b *Breaker) Success() {
+func (b *Breaker) Success() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	changed := b.state != Closed
 	b.failures = 0
 	b.state = Closed
 	b.halfOpenInFlight = false
+	return changed
 }
 
-func (b *Breaker) Failure() {
+func (b *Breaker) Failure() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	previous := b.state
 	b.halfOpenInFlight = false
 	b.failures++
 	if b.state == HalfOpen || b.failures >= b.failureThreshold {
 		b.state = Open
 		b.openedAt = b.now()
 	}
+	return previous != b.state
 }
 
 func (b *Breaker) State() State {

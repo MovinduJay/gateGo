@@ -80,7 +80,20 @@ func New(configPath string, cfg *config.Config, jwtSecret, adminKey string, redi
 		return nil, err
 	}
 	g.routes.Store(set)
+	g.initializeCircuitMetrics(set)
 	return g, nil
+}
+
+func (g *Gateway) initializeCircuitMetrics(set *routeSet) {
+	for _, route := range set.Routes {
+		for _, backend := range route.Balancer.Backends() {
+			g.recordCircuitState(route.Config.Name, backend)
+		}
+	}
+}
+
+func (g *Gateway) recordCircuitState(route string, backend *balancer.Backend) {
+	g.metrics.SetCircuitState(route, backend.URL.Host, backend.Breaker.State().String())
 }
 
 func buildRouteSet(cfg *config.Config) (*routeSet, error) {
@@ -107,6 +120,7 @@ func (g *Gateway) Reload() error {
 		return err
 	}
 	g.routes.Store(set)
+	g.initializeCircuitMetrics(set)
 	if info, statErr := os.Stat(g.configPath); statErr == nil {
 		g.configModTime = info.ModTime()
 	}
@@ -381,7 +395,9 @@ attempts:
 				<-route.retrySlots
 			}
 			cancel()
-			backend.Breaker.Failure()
+			if backend.Breaker.Failure() {
+				g.recordCircuitState(route.Config.Name, backend)
+			}
 			g.metrics.IncUpstreamError(route.Config.Name, backendName)
 			lastErr = reqErr
 			if attempt+1 < maxAttempts {
@@ -402,7 +418,9 @@ attempts:
 				<-route.retrySlots
 			}
 			cancel()
-			backend.Breaker.Failure()
+			if backend.Breaker.Failure() {
+				g.recordCircuitState(route.Config.Name, backend)
+			}
 			g.metrics.IncUpstreamError(route.Config.Name, backendName)
 			g.metrics.IncRetry(route.Config.Name)
 			lastErr = fmt.Errorf("upstream returned %d", resp.StatusCode)
@@ -413,9 +431,13 @@ attempts:
 		}
 
 		if resp.StatusCode >= 500 {
-			backend.Breaker.Failure()
+			if backend.Breaker.Failure() {
+				g.recordCircuitState(route.Config.Name, backend)
+			}
 		} else {
-			backend.Breaker.Success()
+			if backend.Breaker.Success() {
+				g.recordCircuitState(route.Config.Name, backend)
+			}
 		}
 		copyHeaders(w.Header(), resp.Header)
 		removeHopHeaders(w.Header())
@@ -452,12 +474,16 @@ func (g *Gateway) serveWebSocket(w http.ResponseWriter, r *http.Request, route *
 		req.Header.Set("X-GateGo-Proxy", "1")
 	}
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		backend.Breaker.Success()
+		if backend.Breaker.Success() {
+			g.recordCircuitState(route.Config.Name, backend)
+		}
 		g.record(route.Config.Name, backend.URL.Host, resp.StatusCode, started)
 		return nil
 	}
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, e error) {
-		backend.Breaker.Failure()
+		if backend.Breaker.Failure() {
+			g.recordCircuitState(route.Config.Name, backend)
+		}
 		g.metrics.IncUpstreamError(route.Config.Name, backend.URL.Host)
 		g.record(route.Config.Name, backend.URL.Host, http.StatusBadGateway, started)
 		http.Error(rw, "websocket upstream unavailable", http.StatusBadGateway)

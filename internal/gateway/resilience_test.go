@@ -67,6 +67,9 @@ func TestRetryMatrixAndCircuitFailover(t *testing.T) {
 			if !strings.Contains(metricsRR.Body.String(), `gatego_retries_total{route="api"} 20`) {
 				t.Fatalf("retry metric missing: %s", metricsRR.Body.String())
 			}
+			if !strings.Contains(metricsRR.Body.String(), `gatego_backend_circuit_state{route="api",backend="`+strings.TrimPrefix(bad.URL, "http://")+`",state="open"} 1`) {
+				t.Fatalf("open circuit metric missing: %s", metricsRR.Body.String())
+			}
 		})
 	}
 }

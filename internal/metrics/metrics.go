@@ -18,14 +18,14 @@ type Metrics struct {
 	mu                                             sync.RWMutex
 	requests, upstreamErrors, rateLimited, retries map[string]uint64
 	retryRejected, bulkheadRejected                map[string]uint64
-	healthy                                        map[string]float64
+	healthy, circuit                               map[string]float64
 	durations                                      map[string]*hist
 }
 
 var bounds = []float64{.005, .01, .025, .05, .1, .25, .5, 1}
 
 func New() *Metrics {
-	return &Metrics{requests: map[string]uint64{}, upstreamErrors: map[string]uint64{}, rateLimited: map[string]uint64{}, retries: map[string]uint64{}, retryRejected: map[string]uint64{}, bulkheadRejected: map[string]uint64{}, healthy: map[string]float64{}, durations: map[string]*hist{}}
+	return &Metrics{requests: map[string]uint64{}, upstreamErrors: map[string]uint64{}, rateLimited: map[string]uint64{}, retries: map[string]uint64{}, retryRejected: map[string]uint64{}, bulkheadRejected: map[string]uint64{}, healthy: map[string]float64{}, circuit: map[string]float64{}, durations: map[string]*hist{}}
 }
 func key(parts ...string) string { return strings.Join(parts, "\x1f") }
 func (m *Metrics) IncRequest(route, status string) {
@@ -53,6 +53,17 @@ func (m *Metrics) IncBulkheadRejected(route string) {
 func (m *Metrics) SetHealthy(route, backend string, v float64) {
 	m.mu.Lock()
 	m.healthy[key(route, backend)] = v
+	m.mu.Unlock()
+}
+func (m *Metrics) SetCircuitState(route, backend, state string) {
+	m.mu.Lock()
+	for _, candidate := range []string{"closed", "open", "half_open"} {
+		value := 0.0
+		if candidate == state {
+			value = 1
+		}
+		m.circuit[key(route, backend, candidate)] = value
+	}
 	m.mu.Unlock()
 }
 func (m *Metrics) Observe(route, backend string, d time.Duration) {
@@ -102,6 +113,9 @@ func (m *Metrics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	keys := sortedFloat(m.healthy)
 	for _, k := range keys {
 		fmt.Fprintf(w, "gatego_backend_healthy{%s} %g\n", labels(k, "route", "backend"), m.healthy[k])
+	}
+	for _, k := range sortedFloat(m.circuit) {
+		fmt.Fprintf(w, "gatego_backend_circuit_state{%s} %g\n", labels(k, "route", "backend", "state"), m.circuit[k])
 	}
 	for _, k := range sortedHist(m.durations) {
 		h := m.durations[k]

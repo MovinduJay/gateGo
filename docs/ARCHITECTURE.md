@@ -45,7 +45,7 @@ Each route also has a concurrent retry budget, and each backend has an independe
 }
 ```
 
-Containment activations are exported as `gatego_retry_rejected_total` and `gatego_bulkhead_rejected_total`.
+Containment activations are exported as `gatego_retry_rejected_total` and `gatego_bulkhead_rejected_total`. Current circuit states are exported as one-hot gauges through `gatego_backend_circuit_state`.
 
 ### Distributed rate limiting
 With no Redis configured, each GateGo instance uses an in-memory token bucket. When `GATEGO_REDIS_ADDR` is configured, the same token-bucket state is updated atomically by a Redis Lua script, allowing multiple gateway replicas to enforce a shared quota. Redis failures degrade to the local limiter rather than taking the gateway down.
