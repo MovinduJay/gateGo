@@ -1,7 +1,13 @@
-.PHONY: test build run token compose-up compose-down observe load benchmark resilience
+.PHONY: test test-unit test-integration build run token compose-up compose-down observe load benchmark resilience
 
 test:
 	go test ./... -count=1
+
+test-unit:
+	go test ./internal/... -count=1
+
+test-integration:
+	go test ./integration -count=1
 
 build:
 	mkdir -p bin

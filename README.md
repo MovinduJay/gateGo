@@ -63,11 +63,13 @@ Invoke-WebRequest -Method Delete -Headers @{"X-Admin-Key"="dev-admin-key"} "http
 
 ```powershell
 go test ./... -count=1
+go test ./internal/... -count=1
+go test ./integration -count=1
 ./scripts/resilience.ps1
 ./scripts/benchmark.ps1
 ```
 
-The Go suite includes deterministic retry, failure, slow-upstream, circuit-breaker, graceful-shutdown, distributed Redis limit, and config-reload tests. The resilience script repeats them against real containers; it requires Docker Desktop or another running Docker daemon.
+Tests under `internal/` are focused unit and component tests. Tests under `integration/` start real HTTP listeners for GateGo and its backends and exercise administrative operations, routing, readiness, and metrics through the network boundary. The complete Go suite also includes deterministic retry, failure, slow-upstream, circuit-breaker, graceful-shutdown, distributed Redis limit, and config-reload coverage. The resilience script repeats failure scenarios against real containers; it requires Docker Desktop or another running Docker daemon.
 
 The demo backend exposes an authenticated fault controller for testing:
 
