@@ -37,6 +37,14 @@ type Breaker struct {
 	now              func() time.Time
 }
 
+type Snapshot struct {
+	State            State
+	Failures         int
+	FailureThreshold int
+	Cooldown         time.Duration
+	RetryAfter       time.Duration
+}
+
 func New(failureThreshold int, cooldown time.Duration) *Breaker {
 	if failureThreshold <= 0 {
 		failureThreshold = 5
@@ -109,4 +117,30 @@ func (b *Breaker) State() State {
 		return HalfOpen
 	}
 	return b.state
+}
+
+func (b *Breaker) Snapshot() Snapshot {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.state
+	retryAfter := time.Duration(0)
+	if state == Open {
+		retryAfter = b.cooldown - b.now().Sub(b.openedAt)
+		if retryAfter <= 0 {
+			state = HalfOpen
+			retryAfter = 0
+		}
+	}
+	return Snapshot{State: state, Failures: b.failures, FailureThreshold: b.failureThreshold, Cooldown: b.cooldown, RetryAfter: retryAfter}
+}
+
+func (b *Breaker) Reset() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	changed := b.state != Closed || b.failures != 0 || b.halfOpenInFlight
+	b.state = Closed
+	b.failures = 0
+	b.openedAt = time.Time{}
+	b.halfOpenInFlight = false
+	return changed
 }

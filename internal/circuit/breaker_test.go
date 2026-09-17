@@ -49,3 +49,22 @@ func TestAvailableDoesNotConsumeHalfOpenProbe(t *testing.T) {
 		t.Fatal("probe must be unavailable while half-open request is in flight")
 	}
 }
+
+func TestSnapshotAndManualReset(t *testing.T) {
+	now := time.Unix(3000, 0)
+	b := New(2, 5*time.Second)
+	b.now = func() time.Time { return now }
+	b.Failure()
+	b.Failure()
+	snapshot := b.Snapshot()
+	if snapshot.State != Open || snapshot.Failures != 2 || snapshot.FailureThreshold != 2 || snapshot.RetryAfter != 5*time.Second {
+		t.Fatalf("unexpected open snapshot: %+v", snapshot)
+	}
+	if !b.Reset() {
+		t.Fatal("reset should report a state change")
+	}
+	snapshot = b.Snapshot()
+	if snapshot.State != Closed || snapshot.Failures != 0 || snapshot.RetryAfter != 0 {
+		t.Fatalf("unexpected reset snapshot: %+v", snapshot)
+	}
+}

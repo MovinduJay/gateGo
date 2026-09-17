@@ -44,6 +44,14 @@ Invoke-WebRequest -Method Post -Headers @{"X-Admin-Key"="dev-admin-key"} http://
 
 Authenticated `GET /admin/backends` reports health and circuit state for every route/backend pair.
 
+Operators can manually clear circuit state after an emergency repair. The route is required; `backend` may be either the backend URL or host and can be omitted to reset every backend on the route:
+
+```powershell
+Invoke-WebRequest -Method Post -Headers @{"X-Admin-Key"="dev-admin-key"} "http://localhost:8080/admin/circuits/reset?route=public-api&backend=backend-b:9002"
+```
+
+`GET /readyz` is circuit-aware: it returns unavailable when any configured route has no healthy, circuit-eligible backend.
+
 ## Verification
 
 ```powershell

@@ -185,7 +185,7 @@ func (g *Gateway) Ready() bool {
 	for _, route := range set.Routes {
 		ok := false
 		for _, b := range route.Balancer.Backends() {
-			if b.Healthy.Load() {
+			if b.Healthy.Load() && b.Breaker.Available() {
 				ok = true
 				break
 			}
@@ -289,20 +289,60 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 		type backendState struct {
-			Route    string `json:"route"`
-			URL      string `json:"url"`
-			Circuit  string `json:"circuit"`
-			Healthy  bool   `json:"healthy"`
-			InFlight int    `json:"in_flight"`
-			Capacity int    `json:"capacity"`
+			Route            string `json:"route"`
+			URL              string `json:"url"`
+			Circuit          string `json:"circuit"`
+			Failures         int    `json:"failures"`
+			FailureThreshold int    `json:"failure_threshold"`
+			RetryAfterMS     int64  `json:"retry_after_ms"`
+			Healthy          bool   `json:"healthy"`
+			InFlight         int    `json:"in_flight"`
+			Capacity         int    `json:"capacity"`
 		}
 		states := []backendState{}
 		for _, route := range g.routes.Load().Routes {
 			for _, backend := range route.Balancer.Backends() {
-				states = append(states, backendState{Route: route.Config.Name, URL: backend.URL.String(), Healthy: backend.Healthy.Load(), Circuit: backend.Breaker.State().String(), InFlight: backend.InFlight(), Capacity: backend.Capacity()})
+				snapshot := backend.Breaker.Snapshot()
+				states = append(states, backendState{Route: route.Config.Name, URL: backend.URL.String(), Healthy: backend.Healthy.Load(), Circuit: snapshot.State.String(), Failures: snapshot.Failures, FailureThreshold: snapshot.FailureThreshold, RetryAfterMS: snapshot.RetryAfter.Milliseconds(), InFlight: backend.InFlight(), Capacity: backend.Capacity()})
 			}
 		}
 		g.respondJSON(w, http.StatusOK, states)
+		return true
+	case "/admin/circuits/reset":
+		if r.Method != http.MethodPost {
+			g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "POST required"})
+			return true
+		}
+		if g.adminKey == "" || r.Header.Get("X-Admin-Key") != g.adminKey {
+			g.respondJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return true
+		}
+		routeName := strings.TrimSpace(r.URL.Query().Get("route"))
+		backendName := strings.TrimSpace(r.URL.Query().Get("backend"))
+		if routeName == "" {
+			g.respondJSON(w, http.StatusBadRequest, map[string]any{"error": "route query parameter is required"})
+			return true
+		}
+		reset := 0
+		for _, route := range g.routes.Load().Routes {
+			if route.Config.Name != routeName {
+				continue
+			}
+			for _, backend := range route.Balancer.Backends() {
+				if backendName != "" && backendName != backend.URL.String() && backendName != backend.URL.Host {
+					continue
+				}
+				backend.Breaker.Reset()
+				g.recordCircuitState(route.Config.Name, backend)
+				reset++
+			}
+		}
+		if reset == 0 {
+			g.respondJSON(w, http.StatusNotFound, map[string]any{"error": "route or backend not found"})
+			return true
+		}
+		g.logger.Info("circuit breakers manually reset", "route", routeName, "backend", backendName, "count", reset)
+		g.respondJSON(w, http.StatusOK, map[string]any{"status": "reset", "count": reset})
 		return true
 	}
 	return false

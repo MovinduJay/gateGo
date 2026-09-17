@@ -73,6 +73,12 @@ curl -X POST http://localhost:8080/admin/reload \
   -H 'X-Admin-Key: dev-admin-key'
 ```
 
+### Circuit operations
+
+`GET /admin/backends` reports active health, circuit state, accumulated failures, the configured failure threshold, recovery wait, and bulkhead occupancy. `POST /admin/circuits/reset?route=<name>&backend=<url-or-host>` clears circuit state after an operator has independently confirmed recovery. Omitting `backend` resets all circuits on the named route. Both endpoints require `X-Admin-Key`.
+
+Manual reset bypasses the normal cooldown and should be used only for deliberate incident recovery. It does not mark an actively unhealthy backend healthy; active health state remains an independent admission check.
+
 ## Known limitations
 
 These are deliberate portfolio boundaries rather than hidden production claims:

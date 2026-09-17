@@ -12,6 +12,7 @@
 | Request exceeds body limit | Return 413 | Bounded buffering |
 | Gateway receives SIGTERM | Stop accepting new work and drain | `http.Server.Shutdown` |
 | Bad config reload | Keep currently active route set | Atomic swap only after validation |
+| All route circuits open | Report not ready until a probe or operator reset restores eligibility | Circuit-aware readiness |
 
 ### Failure-amplification containment
 

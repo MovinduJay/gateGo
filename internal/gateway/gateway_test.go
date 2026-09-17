@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/example/gatego/internal/config"
@@ -49,6 +50,49 @@ func TestRetryFailsOverToSecondBackend(t *testing.T) {
 	}
 	if rr.Header().Get("X-GateGo-Backend") == "" {
 		t.Fatal("expected selected backend header")
+	}
+}
+
+func TestCircuitAwareReadinessAndAdminReset(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer backend.Close()
+	cfg, err := config.Parse([]byte(`{"routes":[{"name":"api","path_prefix":"/api","backends":[{"url":"` + backend.URL + `"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := metrics.New()
+	gw, err := New("", cfg, "secret", "admin", nil, m, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := gw.routes.Load().Routes[0].Balancer.Backends()[0]
+	for i := 0; i < cfg.Routes[0].Resilience.CircuitFailureThreshold; i++ {
+		target.Breaker.Failure()
+	}
+	if gw.Ready() {
+		t.Fatal("gateway must not be ready when its only backend circuit is open")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://gateway/admin/circuits/reset?route=api&backend="+target.URL.Host, nil)
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated reset status = %d, want 401", rr.Code)
+	}
+	req.Header.Set("X-Admin-Key", "admin")
+	rr = httptest.NewRecorder()
+	gw.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"count":1`) {
+		t.Fatalf("reset failed: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if !gw.Ready() || target.Breaker.State().String() != "closed" {
+		t.Fatal("manual reset should restore circuit eligibility")
+	}
+
+	metricsRR := httptest.NewRecorder()
+	m.ServeHTTP(metricsRR, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(metricsRR.Body.String(), `state="closed"} 1`) {
+		t.Fatalf("closed circuit metric missing after reset: %s", metricsRR.Body.String())
 	}
 }
 
