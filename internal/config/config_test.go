@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestParseAndSortLongestPrefixFirst(t *testing.T) {
 	raw := []byte(`{
@@ -18,5 +22,16 @@ func TestParseAndSortLongestPrefixFirst(t *testing.T) {
 	}
 	if cfg.Routes[0].Timeout.Std().String() != "2s" {
 		t.Fatalf("duration not parsed: %s", cfg.Routes[0].Timeout.Std())
+	}
+	resilience := cfg.Routes[0].Resilience
+	if resilience.CircuitFailureThreshold != 20 || resilience.CircuitCooldown.Std() != 10*time.Second || resilience.MaxConcurrentPerBackend != 16 || resilience.MaxConcurrentRetries != 8 {
+		t.Fatalf("unexpected resilience defaults: %+v", resilience)
+	}
+}
+
+func TestRejectInvalidResilienceConfiguration(t *testing.T) {
+	_, err := Parse([]byte(`{"routes":[{"name":"api","resilience":{"max_concurrent_retries":-1},"backends":[{"url":"http://a"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "resilience values must be positive") {
+		t.Fatalf("expected resilience validation error, got %v", err)
 	}
 }

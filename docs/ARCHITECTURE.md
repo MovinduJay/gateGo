@@ -34,6 +34,19 @@ Health checks are proactive and periodic. The circuit breaker reacts to real req
 ### Retry correctness
 GateGo retries idempotent methods (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`) automatically. `POST` and `PATCH` are retried only when the client supplies `Idempotency-Key`. This avoids turning a network retry into duplicate business side effects.
 
+Each route also has a concurrent retry budget, and each backend has an independent bulkhead. These bounds prevent a failed replica from consuming the capacity needed by healthy replicas. The defaults can be overridden per route:
+
+```json
+"resilience": {
+  "circuit_failure_threshold": 20,
+  "circuit_cooldown": "10s",
+  "max_concurrent_per_backend": 16,
+  "max_concurrent_retries": 8
+}
+```
+
+Containment activations are exported as `gatego_retry_rejected_total` and `gatego_bulkhead_rejected_total`.
+
 ### Distributed rate limiting
 With no Redis configured, each GateGo instance uses an in-memory token bucket. When `GATEGO_REDIS_ADDR` is configured, the same token-bucket state is updated atomically by a Redis Lua script, allowing multiple gateway replicas to enforce a shared quota. Redis failures degrade to the local limiter rather than taking the gateway down.
 

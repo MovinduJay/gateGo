@@ -55,14 +55,22 @@ type ObservabilityConfig struct {
 	ServiceName string `json:"service_name"`
 }
 type RouteConfig struct {
-	Name         string          `json:"name"`
-	PathPrefix   string          `json:"path_prefix"`
-	Methods      []string        `json:"methods"`
-	AuthRequired bool            `json:"auth_required"`
-	RateLimit    RateLimitConfig `json:"rate_limit"`
-	Timeout      Duration        `json:"timeout"`
-	Retries      int             `json:"retries"`
-	Backends     []BackendConfig `json:"backends"`
+	Name         string           `json:"name"`
+	PathPrefix   string           `json:"path_prefix"`
+	Methods      []string         `json:"methods"`
+	AuthRequired bool             `json:"auth_required"`
+	RateLimit    RateLimitConfig  `json:"rate_limit"`
+	Resilience   ResilienceConfig `json:"resilience"`
+	Timeout      Duration         `json:"timeout"`
+	Retries      int              `json:"retries"`
+	Backends     []BackendConfig  `json:"backends"`
+}
+
+type ResilienceConfig struct {
+	CircuitFailureThreshold int      `json:"circuit_failure_threshold"`
+	CircuitCooldown         Duration `json:"circuit_cooldown"`
+	MaxConcurrentPerBackend int      `json:"max_concurrent_per_backend"`
+	MaxConcurrentRetries    int      `json:"max_concurrent_retries"`
 }
 type RateLimitConfig struct {
 	RequestsPerSecond float64 `json:"requests_per_second"`
@@ -149,6 +157,18 @@ func applyDefaults(cfg *Config) {
 		if r.RateLimit.Burst <= 0 {
 			r.RateLimit.Burst = 100
 		}
+		if r.Resilience.CircuitFailureThreshold == 0 {
+			r.Resilience.CircuitFailureThreshold = 20
+		}
+		if r.Resilience.CircuitCooldown == 0 {
+			r.Resilience.CircuitCooldown = Duration(10 * time.Second)
+		}
+		if r.Resilience.MaxConcurrentPerBackend == 0 {
+			r.Resilience.MaxConcurrentPerBackend = 16
+		}
+		if r.Resilience.MaxConcurrentRetries == 0 {
+			r.Resilience.MaxConcurrentRetries = 8
+		}
 		for j := range r.Backends {
 			if r.Backends[j].Weight <= 0 {
 				r.Backends[j].Weight = 1
@@ -177,6 +197,9 @@ func validate(cfg *Config) error {
 		}
 		if len(r.Backends) == 0 {
 			return fmt.Errorf("route %q needs a backend", r.Name)
+		}
+		if r.Resilience.CircuitFailureThreshold < 1 || r.Resilience.CircuitCooldown.Std() <= 0 || r.Resilience.MaxConcurrentPerBackend < 1 || r.Resilience.MaxConcurrentRetries < 1 {
+			return fmt.Errorf("route %q resilience values must be positive", r.Name)
 		}
 		for _, b := range r.Backends {
 			if !strings.HasPrefix(b.URL, "http://") && !strings.HasPrefix(b.URL, "https://") {

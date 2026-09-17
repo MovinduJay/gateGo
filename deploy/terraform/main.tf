@@ -85,6 +85,12 @@ locals {
           requests_per_second = 25
           burst               = 50
         }
+        resilience = {
+          circuit_failure_threshold = 20
+          circuit_cooldown           = "10s"
+          max_concurrent_per_backend = 16
+          max_concurrent_retries     = 8
+        }
         timeout = "8s"
         retries = 1
         backends = [

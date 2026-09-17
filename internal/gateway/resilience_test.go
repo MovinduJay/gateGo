@@ -45,14 +45,14 @@ func TestRetryMatrixAndCircuitFailover(t *testing.T) {
 			defer good.Close()
 			m := metrics.New()
 			gw := testGateway(t, fmt.Sprintf(`[{"url":%q,"weight":1},{"url":%q,"weight":1}]`, bad.URL, good.URL), 1, "1s", nil, m)
-			for i := 0; i < 12; i++ {
+			for i := 0; i < 45; i++ {
 				rr := httptest.NewRecorder()
 				gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://gateway/api/test", nil))
 				if rr.Code != http.StatusOK {
 					t.Fatalf("request %d: got %d", i, rr.Code)
 				}
 			}
-			if failures.Load() != 5 {
+			if failures.Load() != 20 {
 				t.Fatalf("breaker should stop calls after threshold: calls=%d", failures.Load())
 			}
 			rr := httptest.NewRecorder()
@@ -64,10 +64,49 @@ func TestRetryMatrixAndCircuitFailover(t *testing.T) {
 			}
 			metricsRR := httptest.NewRecorder()
 			m.ServeHTTP(metricsRR, httptest.NewRequest(http.MethodGet, "http://gateway/metrics", nil))
-			if !strings.Contains(metricsRR.Body.String(), `gatego_retries_total{route="api"} 5`) {
+			if !strings.Contains(metricsRR.Body.String(), `gatego_retries_total{route="api"} 20`) {
 				t.Fatalf("retry metric missing: %s", metricsRR.Body.String())
 			}
 		})
+	}
+}
+
+func TestConcurrentFailureIsContainedToBadBackend(t *testing.T) {
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
+	defer bad.Close()
+	goodA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer goodA.Close()
+	goodC := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer goodC.Close()
+
+	gw := testGateway(t, fmt.Sprintf(`[{"url":%q,"weight":1},{"url":%q,"weight":3},{"url":%q,"weight":1}]`, bad.URL, goodA.URL, goodC.URL), 2, "1s", nil, metrics.New())
+	var failures atomic.Int64
+	var wg sync.WaitGroup
+	for worker := 0; worker < 30; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for request := 0; request < 100; request++ {
+				rr := httptest.NewRecorder()
+				gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://gateway/api/load", nil))
+				if rr.Code != http.StatusOK {
+					failures.Add(1)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if failures.Load() > 30 {
+		t.Fatalf("failure escaped isolation budget: %d of 3000 requests failed", failures.Load())
+	}
+	backends := gw.routes.Load().Routes[0].Balancer.Backends()
+	if backends[0].Breaker.State().String() != "open" {
+		t.Fatalf("bad backend circuit = %s, want open", backends[0].Breaker.State())
+	}
+	for _, backend := range backends[1:] {
+		if backend.Breaker.State().String() != "closed" {
+			t.Fatalf("healthy backend %s circuit = %s, want closed", backend.URL, backend.Breaker.State())
+		}
 	}
 }
 

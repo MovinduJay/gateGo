@@ -13,6 +13,12 @@
 | Gateway receives SIGTERM | Stop accepting new work and drain | `http.Server.Shutdown` |
 | Bad config reload | Keep currently active route set | Atomic swap only after validation |
 
+### Failure-amplification containment
+
+Retries use jittered exponential backoff and an eight-request concurrent budget per route by default. Each backend has an independent 16-request bulkhead, so retry traffic aimed at one failing replica cannot consume all capacity reserved for healthy replicas. Passive circuits open after 20 failures; this still isolates a persistent failure quickly while avoiding circuit trips from small, concurrent bursts of tail-latency errors. After the ten-second cooldown, the circuit permits one half-open probe and closes only when that probe succeeds. All four values are configurable through each route's `resilience` object.
+
+When Redis is unavailable, the gateway falls back locally and waits one second before trying Redis again. Warning logs use the same cooldown. This prevents an unavailable rate-limit dependency from adding a dial and synchronous log write to every request during an upstream incident.
+
 ## Failure demo
 
 `backend-b` in Docker Compose has a 10% simulated failure rate. Generate traffic and inspect:

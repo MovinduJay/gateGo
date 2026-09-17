@@ -17,6 +17,7 @@ type hist struct {
 type Metrics struct {
 	mu                                             sync.RWMutex
 	requests, upstreamErrors, rateLimited, retries map[string]uint64
+	retryRejected, bulkheadRejected                map[string]uint64
 	healthy                                        map[string]float64
 	durations                                      map[string]*hist
 }
@@ -24,7 +25,7 @@ type Metrics struct {
 var bounds = []float64{.005, .01, .025, .05, .1, .25, .5, 1}
 
 func New() *Metrics {
-	return &Metrics{requests: map[string]uint64{}, upstreamErrors: map[string]uint64{}, rateLimited: map[string]uint64{}, retries: map[string]uint64{}, healthy: map[string]float64{}, durations: map[string]*hist{}}
+	return &Metrics{requests: map[string]uint64{}, upstreamErrors: map[string]uint64{}, rateLimited: map[string]uint64{}, retries: map[string]uint64{}, retryRejected: map[string]uint64{}, bulkheadRejected: map[string]uint64{}, healthy: map[string]float64{}, durations: map[string]*hist{}}
 }
 func key(parts ...string) string { return strings.Join(parts, "\x1f") }
 func (m *Metrics) IncRequest(route, status string) {
@@ -39,6 +40,16 @@ func (m *Metrics) IncUpstreamError(route, backend string) {
 }
 func (m *Metrics) IncRateLimited(route string) { m.mu.Lock(); m.rateLimited[route]++; m.mu.Unlock() }
 func (m *Metrics) IncRetry(route string)       { m.mu.Lock(); m.retries[route]++; m.mu.Unlock() }
+func (m *Metrics) IncRetryRejected(route string) {
+	m.mu.Lock()
+	m.retryRejected[route]++
+	m.mu.Unlock()
+}
+func (m *Metrics) IncBulkheadRejected(route string) {
+	m.mu.Lock()
+	m.bulkheadRejected[route]++
+	m.mu.Unlock()
+}
 func (m *Metrics) SetHealthy(route, backend string, v float64) {
 	m.mu.Lock()
 	m.healthy[key(route, backend)] = v
@@ -86,6 +97,8 @@ func (m *Metrics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeMap(w, "gatego_upstream_errors_total", m.upstreamErrors, []string{"route", "backend"})
 	writeMap(w, "gatego_rate_limited_total", m.rateLimited, []string{"route"})
 	writeMap(w, "gatego_retries_total", m.retries, []string{"route"})
+	writeMap(w, "gatego_retry_rejected_total", m.retryRejected, []string{"route"})
+	writeMap(w, "gatego_bulkhead_rejected_total", m.bulkheadRejected, []string{"route"})
 	keys := sortedFloat(m.healthy)
 	for _, k := range keys {
 		fmt.Fprintf(w, "gatego_backend_healthy{%s} %g\n", labels(k, "route", "backend"), m.healthy[k])

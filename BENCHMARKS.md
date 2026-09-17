@@ -49,6 +49,27 @@ This is an end-to-end single-host limit, not a portable GateGo capacity claim. T
 
 `scripts/resilience.ps1` repeats the scenarios against the full Docker Compose topology, including stopping a real backend container and alternating clients between ports 8080 and 8081. It requires a running Docker daemon.
 
+## Persistent-backend-failure containment
+
+The concurrency-30 failure test uncovered and then verified a cascading-failure fix. In both runs, backend B returned persistent HTTP 503 responses while the gateway continued receiving traffic.
+
+| Result | Before containment | After containment |
+|---|---:|---:|
+| Duration | 5 s | 5 s |
+| Concurrency | 30 | 30 |
+| Requests | 2,551 | 126,256 |
+| Successful | 0 | 126,256 |
+| HTTP 502 | 2,551 | 0 |
+| p99 | 937.35 ms | 3.22 ms |
+| Retry attempts | capped per request, not globally bounded | 34 (0.027% of requests) |
+| Backend A circuit | open | closed |
+| Backend B circuit | open | open |
+| Backend C circuit | open | closed |
+
+The original result is intentionally retained: retries propagated pressure to healthy replicas and eventually opened all three circuits. Containment adds an eight-request per-route concurrent retry budget, a 16-request per-backend bulkhead, jittered exponential backoff, a less noise-sensitive passive failure threshold, and a one-second Redis reconnect/logging cooldown. After B's fault was removed, a single controlled half-open probe succeeded after the ten-second cooldown and B's circuit closed again.
+
+The native Windows rerun also deliberately pointed Redis at an unavailable local port, exercising Redis fallback at the same time. The cooldown prevents that secondary dependency failure from adding a connection attempt and warning-log write to every gateway request. The Docker resilience script remains the authoritative real-Redis shared-limit test.
+
 ## Horizontally scaled topology
 
 ```text

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -31,8 +32,9 @@ import (
 )
 
 type Route struct {
-	Config   config.RouteConfig
-	Balancer *balancer.WeightedRoundRobin
+	Config     config.RouteConfig
+	Balancer   *balancer.WeightedRoundRobin
+	retrySlots chan struct{}
 }
 
 type routeSet struct {
@@ -53,6 +55,8 @@ type Gateway struct {
 	trustForwarded bool
 	reloadMu       sync.Mutex
 	configModTime  time.Time
+	redisRetryAt   atomic.Int64
+	redisWarnAt    atomic.Int64
 }
 
 func New(configPath string, cfg *config.Config, jwtSecret, adminKey string, redisLimiter *ratelimit.RedisLimiter, m *metrics.Metrics, logger *slog.Logger) (*Gateway, error) {
@@ -82,11 +86,11 @@ func New(configPath string, cfg *config.Config, jwtSecret, adminKey string, redi
 func buildRouteSet(cfg *config.Config) (*routeSet, error) {
 	set := &routeSet{Config: cfg}
 	for _, rc := range cfg.Routes {
-		lb, err := balancer.New(rc.Backends)
+		lb, err := balancer.New(rc.Backends, rc.Resilience)
 		if err != nil {
 			return nil, fmt.Errorf("route %s: %w", rc.Name, err)
 		}
-		set.Routes = append(set.Routes, &Route{Config: rc, Balancer: lb})
+		set.Routes = append(set.Routes, &Route{Config: rc, Balancer: lb, retrySlots: make(chan struct{}, rc.Resilience.MaxConcurrentRetries)})
 	}
 	return set, nil
 }
@@ -271,15 +275,17 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 		type backendState struct {
-			Route   string `json:"route"`
-			URL     string `json:"url"`
-			Circuit string `json:"circuit"`
-			Healthy bool   `json:"healthy"`
+			Route    string `json:"route"`
+			URL      string `json:"url"`
+			Circuit  string `json:"circuit"`
+			Healthy  bool   `json:"healthy"`
+			InFlight int    `json:"in_flight"`
+			Capacity int    `json:"capacity"`
 		}
 		states := []backendState{}
 		for _, route := range g.routes.Load().Routes {
 			for _, backend := range route.Balancer.Backends() {
-				states = append(states, backendState{Route: route.Config.Name, URL: backend.URL.String(), Healthy: backend.Healthy.Load(), Circuit: backend.Breaker.State().String()})
+				states = append(states, backendState{Route: route.Config.Name, URL: backend.URL.String(), Healthy: backend.Healthy.Load(), Circuit: backend.Breaker.State().String(), InFlight: backend.InFlight(), Capacity: backend.Capacity()})
 			}
 		}
 		g.respondJSON(w, http.StatusOK, states)
@@ -301,11 +307,19 @@ func (g *Gateway) allowRate(ctx context.Context, route *Route, identity string) 
 	key := route.Config.Name + ":" + identity
 	rl := route.Config.RateLimit
 	if g.redis != nil {
-		ok, err := g.redis.Allow(ctx, key, rl.RequestsPerSecond, rl.Burst)
-		if err == nil {
-			return ok
+		now := time.Now().UnixNano()
+		if now >= g.redisRetryAt.Load() {
+			ok, err := g.redis.Allow(ctx, key, rl.RequestsPerSecond, rl.Burst)
+			if err == nil {
+				g.redisRetryAt.Store(0)
+				return ok
+			}
+			g.redisRetryAt.Store(time.Now().Add(time.Second).UnixNano())
+			if now >= g.redisWarnAt.Load() {
+				g.redisWarnAt.Store(time.Now().Add(time.Second).UnixNano())
+				g.logger.Warn("redis rate limiter unavailable; using local fallback", "error", err)
+			}
 		}
-		g.logger.Warn("redis rate limiter unavailable; using local fallback", "error", err)
 	}
 	return g.local.Allow(key, rl.RequestsPerSecond, rl.Burst)
 }
@@ -324,22 +338,48 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request, route *Route
 		maxAttempts += route.Config.Retries
 	}
 	var lastErr error
+attempts:
 	for attempt := 0; attempt < maxAttempts; attempt++ {
+		retryAdmitted := false
+		if attempt > 0 {
+			select {
+			case route.retrySlots <- struct{}{}:
+				retryAdmitted = true
+			default:
+				lastErr = fmt.Errorf("retry budget exhausted")
+				g.metrics.IncRetryRejected(route.Config.Name)
+				break attempts
+			}
+		}
 		backend, pickErr := route.Balancer.Pick()
 		if pickErr != nil {
+			if retryAdmitted {
+				<-route.retrySlots
+			}
 			lastErr = pickErr
+			if errors.Is(pickErr, balancer.ErrAllBackendsBusy) {
+				g.metrics.IncBulkheadRejected(route.Config.Name)
+			}
 			break
 		}
 		backendName := backend.URL.Host
 		ctx, cancel := context.WithTimeout(r.Context(), route.Config.Timeout.Std())
 		upstreamReq, reqErr := buildUpstreamRequest(ctx, r, backend.URL.String(), body)
 		if reqErr != nil {
+			backend.Release()
+			if retryAdmitted {
+				<-route.retrySlots
+			}
 			cancel()
 			lastErr = reqErr
 			break
 		}
 		resp, reqErr := g.client.Do(upstreamReq)
 		if reqErr != nil {
+			backend.Release()
+			if retryAdmitted {
+				<-route.retrySlots
+			}
 			cancel()
 			backend.Breaker.Failure()
 			g.metrics.IncUpstreamError(route.Config.Name, backendName)
@@ -357,6 +397,10 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request, route *Route
 		if retryableStatus(resp.StatusCode) && attempt+1 < maxAttempts {
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 			resp.Body.Close()
+			backend.Release()
+			if retryAdmitted {
+				<-route.retrySlots
+			}
 			cancel()
 			backend.Breaker.Failure()
 			g.metrics.IncUpstreamError(route.Config.Name, backendName)
@@ -379,6 +423,10 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request, route *Route
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)
 		resp.Body.Close()
+		backend.Release()
+		if retryAdmitted {
+			<-route.retrySlots
+		}
 		cancel()
 		g.record(route.Config.Name, backendName, resp.StatusCode, started)
 		return
@@ -414,6 +462,7 @@ func (g *Gateway) serveWebSocket(w http.ResponseWriter, r *http.Request, route *
 		g.record(route.Config.Name, backend.URL.Host, http.StatusBadGateway, started)
 		http.Error(rw, "websocket upstream unavailable", http.StatusBadGateway)
 	}
+	defer backend.Release()
 	w.Header().Set("X-GateGo-Backend", backend.URL.Host)
 	proxy.ServeHTTP(w, r)
 }

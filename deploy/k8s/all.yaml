@@ -25,7 +25,7 @@ data:
       "health":{"interval":"3s","timeout":"1s","failure_threshold":2,"success_threshold":1},
       "observability":{"service_name":"gatego"},
       "routes":[
-        {"name":"public-api","path_prefix":"/public","methods":["GET","POST"],"auth_required":false,"rate_limit":{"requests_per_second":25,"burst":50},"timeout":"2s","retries":2,"backends":[{"url":"http://backend-a:9001","weight":3,"health_path":"/healthz"},{"url":"http://backend-b:9002","weight":1,"health_path":"/healthz"}]},
+        {"name":"public-api","path_prefix":"/public","methods":["GET","POST"],"auth_required":false,"rate_limit":{"requests_per_second":25,"burst":50},"resilience":{"circuit_failure_threshold":20,"circuit_cooldown":"10s","max_concurrent_per_backend":16,"max_concurrent_retries":8},"timeout":"2s","retries":2,"backends":[{"url":"http://backend-a:9001","weight":3,"health_path":"/healthz"},{"url":"http://backend-b:9002","weight":1,"health_path":"/healthz"}]},
         {"name":"protected-api","path_prefix":"/api","methods":["GET","POST","PUT","PATCH","DELETE"],"auth_required":true,"rate_limit":{"requests_per_second":50,"burst":100},"timeout":"3s","retries":2,"backends":[{"url":"http://backend-a:9001","weight":2,"health_path":"/healthz"},{"url":"http://backend-b:9002","weight":1,"health_path":"/healthz"},{"url":"http://backend-c:9003","weight":1,"health_path":"/healthz"}]}
       ]
     }

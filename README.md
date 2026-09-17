@@ -2,6 +2,8 @@
 
 GateGo is a cloud-native Go API gateway with weighted load balancing, active health checks, retries, circuit breaking, JWT authentication, local or Redis-backed token-bucket rate limiting, metrics, graceful shutdown, and atomic configuration reload.
 
+Retries are contained by per-route concurrency budgets and each backend has an independent bulkhead. Circuit thresholds, cooldowns, bulkhead capacity, and retry capacity are configurable per route through the `resilience` object.
+
 ## Run locally
 
 Start three demo backends, then GateGo with the local configuration:
