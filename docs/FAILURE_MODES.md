@@ -14,6 +14,7 @@
 | Bad config reload | Keep currently active route set | Atomic swap only after validation |
 | All route circuits open | Report not ready until a probe or operator reset restores eligibility | Circuit-aware readiness |
 | Backend needs maintenance | Stop new selections while allowing in-flight work to finish | Administrative drain |
+| Route concurrency is exhausted | Return 503 with `Retry-After` before consuming upstream capacity | Route admission control |
 
 ### Failure-amplification containment
 

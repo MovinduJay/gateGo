@@ -22,7 +22,7 @@
       "methods": ["GET", "POST"],
       "auth_required": false,
       "rate_limit": { "requests_per_second": 50000, "burst": 100000 },
-      "resilience": { "circuit_failure_threshold": 20, "circuit_cooldown": "10s", "max_concurrent_per_backend": 16, "max_concurrent_retries": 8 },
+      "resilience": { "circuit_failure_threshold": 20, "circuit_cooldown": "10s", "max_concurrent_per_backend": 16, "max_concurrent_retries": 8, "max_concurrent_requests": 256 },
       "timeout": "2s",
       "retries": 2,
       "backends": [

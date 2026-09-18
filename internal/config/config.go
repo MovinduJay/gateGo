@@ -72,6 +72,7 @@ type ResilienceConfig struct {
 	CircuitCooldown         Duration `json:"circuit_cooldown"`
 	MaxConcurrentPerBackend int      `json:"max_concurrent_per_backend"`
 	MaxConcurrentRetries    int      `json:"max_concurrent_retries"`
+	MaxConcurrentRequests   int      `json:"max_concurrent_requests"`
 }
 type RateLimitConfig struct {
 	RequestsPerSecond float64 `json:"requests_per_second"`
@@ -173,6 +174,9 @@ func applyDefaults(cfg *Config) {
 		if r.Resilience.MaxConcurrentRetries == 0 {
 			r.Resilience.MaxConcurrentRetries = 8
 		}
+		if r.Resilience.MaxConcurrentRequests == 0 {
+			r.Resilience.MaxConcurrentRequests = 256
+		}
 		for j := range r.Backends {
 			if r.Backends[j].Weight <= 0 {
 				r.Backends[j].Weight = 1
@@ -205,7 +209,7 @@ func validate(cfg *Config) error {
 		if len(r.Backends) == 0 {
 			return fmt.Errorf("route %q needs a backend", r.Name)
 		}
-		if r.Resilience.CircuitFailureThreshold < 1 || r.Resilience.CircuitCooldown.Std() <= 0 || r.Resilience.MaxConcurrentPerBackend < 1 || r.Resilience.MaxConcurrentRetries < 1 {
+		if r.Resilience.CircuitFailureThreshold < 1 || r.Resilience.CircuitCooldown.Std() <= 0 || r.Resilience.MaxConcurrentPerBackend < 1 || r.Resilience.MaxConcurrentRetries < 1 || r.Resilience.MaxConcurrentRequests < 1 {
 			return fmt.Errorf("route %q resilience values must be positive", r.Name)
 		}
 		for _, b := range r.Backends {

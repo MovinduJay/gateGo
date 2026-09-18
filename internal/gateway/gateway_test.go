@@ -160,6 +160,45 @@ func TestBackendDrainStopsNewTrafficAndPreservesInflight(t *testing.T) {
 	}
 }
 
+func TestRouteAdmissionControlShedsExcessLoad(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	raw := []byte(`{"routes":[{"name":"api","path_prefix":"/api","resilience":{"max_concurrent_requests":1},"backends":[{"url":"` + backend.URL + `"}]}]}`)
+	cfg, err := config.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := metrics.New()
+	gw, err := New("", cfg, "secret", "admin", nil, m, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		gw.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://gateway/api/first", nil))
+	}()
+	<-started
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://gateway/api/second", nil))
+	if rr.Code != http.StatusServiceUnavailable || rr.Header().Get("Retry-After") != "1" {
+		t.Fatalf("shed response = %d retry-after=%q body=%s", rr.Code, rr.Header().Get("Retry-After"), rr.Body.String())
+	}
+	close(release)
+	<-firstDone
+	metricsRR := httptest.NewRecorder()
+	m.ServeHTTP(metricsRR, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(metricsRR.Body.String(), `gatego_load_shed_total{route="api"} 1`) {
+		t.Fatalf("load-shed metric missing: %s", metricsRR.Body.String())
+	}
+}
+
 func TestPathPrefixRespectsSegmentBoundary(t *testing.T) {
 	if !pathMatches("/api", "/api") || !pathMatches("/api/users", "/api") {
 		t.Fatal("expected /api route to match its segment")

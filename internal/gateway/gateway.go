@@ -32,9 +32,10 @@ import (
 )
 
 type Route struct {
-	Config     config.RouteConfig
-	Balancer   *balancer.WeightedRoundRobin
-	retrySlots chan struct{}
+	Config       config.RouteConfig
+	Balancer     *balancer.WeightedRoundRobin
+	retrySlots   chan struct{}
+	requestSlots chan struct{}
 }
 
 type routeSet struct {
@@ -104,7 +105,7 @@ func buildRouteSet(cfg *config.Config) (*routeSet, error) {
 		if err != nil {
 			return nil, fmt.Errorf("route %s: %w", rc.Name, err)
 		}
-		set.Routes = append(set.Routes, &Route{Config: rc, Balancer: lb, retrySlots: make(chan struct{}, rc.Resilience.MaxConcurrentRetries)})
+		set.Routes = append(set.Routes, &Route{Config: rc, Balancer: lb, retrySlots: make(chan struct{}, rc.Resilience.MaxConcurrentRetries), requestSlots: make(chan struct{}, rc.Resilience.MaxConcurrentRequests)})
 	}
 	return set, nil
 }
@@ -220,6 +221,16 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", strings.Join(route.Config.Methods, ", "))
 		g.record(route.Config.Name, "", http.StatusMethodNotAllowed, started)
 		g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed", "request_id": requestID})
+		return
+	}
+	select {
+	case route.requestSlots <- struct{}{}:
+		defer func() { <-route.requestSlots }()
+	default:
+		g.metrics.IncLoadShed(route.Config.Name)
+		g.record(route.Config.Name, "", http.StatusServiceUnavailable, started)
+		w.Header().Set("Retry-After", "1")
+		g.respondJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "route capacity exhausted", "request_id": requestID})
 		return
 	}
 
