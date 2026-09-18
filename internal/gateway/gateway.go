@@ -121,6 +121,7 @@ func (g *Gateway) Reload() error {
 	if err != nil {
 		return err
 	}
+	preserveDrainState(g.routes.Load(), set)
 	g.routes.Store(set)
 	g.initializeCircuitMetrics(set)
 	if info, statErr := os.Stat(g.configPath); statErr == nil {
@@ -128,6 +129,26 @@ func (g *Gateway) Reload() error {
 	}
 	g.logger.Info("configuration reloaded", "routes", len(set.Routes))
 	return nil
+}
+
+func preserveDrainState(previous, next *routeSet) {
+	if previous == nil || next == nil {
+		return
+	}
+	draining := make(map[string]struct{})
+	for _, route := range previous.Routes {
+		for _, backend := range route.Balancer.Backends() {
+			if backend.Draining.Load() {
+				draining[route.Config.Name+"\x00"+backend.URL.String()] = struct{}{}
+			}
+		}
+	}
+	for _, route := range next.Routes {
+		for _, backend := range route.Balancer.Backends() {
+			_, shouldDrain := draining[route.Config.Name+"\x00"+backend.URL.String()]
+			backend.Draining.Store(shouldDrain)
+		}
+	}
 }
 
 // WatchConfig reloads an on-disk configuration atomically whenever it changes.
@@ -364,6 +385,7 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 		}
 		draining := r.Method == http.MethodPost
 		updated := false
+		g.reloadMu.Lock()
 		for _, route := range g.routes.Load().Routes {
 			if route.Config.Name != routeName {
 				continue
@@ -377,6 +399,7 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 				updated = true
 			}
 		}
+		g.reloadMu.Unlock()
 		if !updated {
 			g.respondJSON(w, http.StatusNotFound, map[string]any{"error": "route or backend not found"})
 			return true

@@ -72,3 +72,37 @@ func TestAutomaticConfigReloadUsesLastKnownGoodConfig(t *testing.T) {
 		t.Fatalf("invalid config replaced last known-good routes, body=%q", got)
 	}
 }
+
+func TestReloadPreservesBackendDrainState(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer backend.Close()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "gatego.json")
+	raw := fmt.Sprintf(`{"routes":[{"name":"api","path_prefix":"/api","backends":[{"url":%q}]}]}`, backend.URL)
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New(path, cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := gw.routes.Load().Routes[0].Balancer.Backends()[0]
+	before.Draining.Store(true)
+	if err := gw.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	after := gw.routes.Load().Routes[0].Balancer.Backends()[0]
+	if after == before {
+		t.Fatal("reload should build a new backend object")
+	}
+	if !after.Draining.Load() {
+		t.Fatal("reload lost administrative drain state")
+	}
+	if gw.Ready() {
+		t.Fatal("preserved drain state should keep the only route unavailable")
+	}
+}

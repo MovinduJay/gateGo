@@ -86,6 +86,8 @@ Manual reset bypasses the normal cooldown and should be used only for deliberate
 
 `POST /admin/backends/drain?route=<name>&backend=<url-or-host>` removes a backend from new load-balancer selections while allowing its in-flight requests to complete. `DELETE` against the same endpoint activates it again. Drain state is independent from health and circuit state, is included in `/admin/backends`, and is exported through `gatego_backend_draining`.
 
+Drain state is preserved across configuration reloads when both the route name and backend URL still match. Removing or renaming either intentionally discards the old administrative state.
+
 ## Known limitations
 
 These are deliberate portfolio boundaries rather than hidden production claims:
