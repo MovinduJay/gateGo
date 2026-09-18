@@ -42,6 +42,12 @@ Reloads can also be triggered with `SIGHUP` or:
 Invoke-WebRequest -Method Post -Headers @{"X-Admin-Key"="dev-admin-key"} http://localhost:8080/admin/reload
 ```
 
+A candidate configuration can be validated without applying it:
+
+```powershell
+Invoke-WebRequest -Method Post -Headers @{"X-Admin-Key"="dev-admin-key"} -ContentType "application/json" -InFile configs/gatego.json http://localhost:8080/admin/config/validate
+```
+
 Authenticated `GET /admin/backends` reports health and circuit state for every route/backend pair.
 
 Operators can manually clear circuit state after an emergency repair. The route is required; `backend` may be either the backend URL or host and can be omitted to reset every backend on the route:

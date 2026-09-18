@@ -225,6 +225,36 @@ func TestRouteRequestBodyLimitOverridesServerLimit(t *testing.T) {
 	}
 }
 
+func TestConfigValidationDoesNotApplyCandidate(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer backend.Close()
+	cfg, err := config.Parse([]byte(`{"routes":[{"name":"current","path_prefix":"/current","backends":[{"url":"` + backend.URL + `"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	validate := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "http://gateway/admin/config/validate", strings.NewReader(body))
+		req.Header.Set("X-Admin-Key", "admin")
+		rr := httptest.NewRecorder()
+		gw.ServeHTTP(rr, req)
+		return rr
+	}
+	candidate := `{"routes":[{"name":"candidate","path_prefix":"/candidate","backends":[{"url":"` + backend.URL + `"}]}]}`
+	if rr := validate(candidate); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"status":"valid"`) {
+		t.Fatalf("valid candidate rejected: %d %s", rr.Code, rr.Body.String())
+	}
+	if gw.match("/current/test") == nil || gw.match("/candidate/test") != nil {
+		t.Fatal("validation must not replace active routes")
+	}
+	if rr := validate(`{"routes":[]}`); rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), `"status":"invalid"`) {
+		t.Fatalf("invalid candidate accepted: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestPathPrefixRespectsSegmentBoundary(t *testing.T) {
 	if !pathMatches("/api", "/api") || !pathMatches("/api/users", "/api") {
 		t.Fatal("expected /api route to match its segment")

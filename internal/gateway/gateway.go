@@ -291,6 +291,32 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 		}
 		g.respondJSON(w, http.StatusOK, map[string]any{"status": "reloaded"})
 		return true
+	case "/admin/config/validate":
+		if r.Method != http.MethodPost {
+			g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "POST required"})
+			return true
+		}
+		if g.adminKey == "" || r.Header.Get("X-Admin-Key") != g.adminKey {
+			g.respondJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return true
+		}
+		limit := g.routes.Load().Config.Server.MaxRequestBodyBytes
+		raw, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+		if err != nil {
+			g.respondJSON(w, http.StatusBadRequest, map[string]any{"error": "read configuration: " + err.Error()})
+			return true
+		}
+		if int64(len(raw)) > limit {
+			g.respondJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "configuration exceeds size limit", "limit_bytes": limit})
+			return true
+		}
+		candidate, err := config.Parse(raw)
+		if err != nil {
+			g.respondJSON(w, http.StatusBadRequest, map[string]any{"status": "invalid", "error": err.Error()})
+			return true
+		}
+		g.respondJSON(w, http.StatusOK, map[string]any{"status": "valid", "routes": len(candidate.Routes)})
+		return true
 	case "/admin/backends":
 		if r.Method != http.MethodGet {
 			g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "GET required"})
