@@ -199,6 +199,32 @@ func TestRouteAdmissionControlShedsExcessLoad(t *testing.T) {
 	}
 }
 
+func TestRouteRequestBodyLimitOverridesServerLimit(t *testing.T) {
+	called := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	raw := []byte(`{"server":{"max_request_body_bytes":1024},"routes":[{"name":"api","path_prefix":"/api","methods":["POST"],"max_request_body_bytes":4,"backends":[{"url":"` + backend.URL + `"}]}]}`)
+	cfg, err := config.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "http://gateway/api/upload", strings.NewReader("12345")))
+	if rr.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rr.Body.String(), `"limit_bytes":4`) {
+		t.Fatalf("body limit response = %d %s", rr.Code, rr.Body.String())
+	}
+	if called {
+		t.Fatal("oversized request must not reach the backend")
+	}
+}
+
 func TestPathPrefixRespectsSegmentBoundary(t *testing.T) {
 	if !pathMatches("/api", "/api") || !pathMatches("/api/users", "/api") {
 		t.Fatal("expected /api route to match its segment")

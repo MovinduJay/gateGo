@@ -56,15 +56,16 @@ type ObservabilityConfig struct {
 	ServiceName string `json:"service_name"`
 }
 type RouteConfig struct {
-	Name         string           `json:"name"`
-	PathPrefix   string           `json:"path_prefix"`
-	Methods      []string         `json:"methods"`
-	AuthRequired bool             `json:"auth_required"`
-	RateLimit    RateLimitConfig  `json:"rate_limit"`
-	Resilience   ResilienceConfig `json:"resilience"`
-	Timeout      Duration         `json:"timeout"`
-	Retries      int              `json:"retries"`
-	Backends     []BackendConfig  `json:"backends"`
+	Name                string           `json:"name"`
+	PathPrefix          string           `json:"path_prefix"`
+	Methods             []string         `json:"methods"`
+	AuthRequired        bool             `json:"auth_required"`
+	RateLimit           RateLimitConfig  `json:"rate_limit"`
+	Resilience          ResilienceConfig `json:"resilience"`
+	Timeout             Duration         `json:"timeout"`
+	Retries             int              `json:"retries"`
+	MaxRequestBodyBytes int64            `json:"max_request_body_bytes"`
+	Backends            []BackendConfig  `json:"backends"`
 }
 
 type ResilienceConfig struct {
@@ -208,6 +209,9 @@ func validate(cfg *Config) error {
 		}
 		if len(r.Backends) == 0 {
 			return fmt.Errorf("route %q needs a backend", r.Name)
+		}
+		if r.MaxRequestBodyBytes < 0 {
+			return fmt.Errorf("route %q max_request_body_bytes cannot be negative", r.Name)
 		}
 		if r.Resilience.CircuitFailureThreshold < 1 || r.Resilience.CircuitCooldown.Std() <= 0 || r.Resilience.MaxConcurrentPerBackend < 1 || r.Resilience.MaxConcurrentRetries < 1 || r.Resilience.MaxConcurrentRequests < 1 {
 			return fmt.Errorf("route %q resilience values must be positive", r.Name)

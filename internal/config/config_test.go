@@ -35,3 +35,10 @@ func TestRejectInvalidResilienceConfiguration(t *testing.T) {
 		t.Fatalf("expected resilience validation error, got %v", err)
 	}
 }
+
+func TestRejectNegativeRouteBodyLimit(t *testing.T) {
+	_, err := Parse([]byte(`{"routes":[{"name":"api","max_request_body_bytes":-1,"backends":[{"url":"http://a"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "max_request_body_bytes cannot be negative") {
+		t.Fatalf("expected body-limit validation error, got %v", err)
+	}
+}

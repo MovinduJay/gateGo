@@ -25,6 +25,7 @@
       "resilience": { "circuit_failure_threshold": 20, "circuit_cooldown": "10s", "max_concurrent_per_backend": 16, "max_concurrent_retries": 8, "max_concurrent_requests": 256 },
       "timeout": "2s",
       "retries": 2,
+      "max_request_body_bytes": 1048576,
       "backends": [
         { "url": "http://backend-a:9001", "weight": 3, "health_path": "/healthz" },
         { "url": "http://backend-b:9002", "weight": 1, "health_path": "/healthz" },

@@ -434,10 +434,14 @@ func (g *Gateway) allowRate(ctx context.Context, route *Route, identity string) 
 
 func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request, route *Route, started time.Time) {
 	set := g.routes.Load()
-	body, err := readBody(r, set.Config.Server.MaxRequestBodyBytes)
+	maxBodyBytes := route.Config.MaxRequestBodyBytes
+	if maxBodyBytes == 0 {
+		maxBodyBytes = set.Config.Server.MaxRequestBodyBytes
+	}
+	body, err := readBody(r, maxBodyBytes)
 	if err != nil {
 		g.record(route.Config.Name, "", http.StatusRequestEntityTooLarge, started)
-		g.respondJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": err.Error()})
+		g.respondJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": err.Error(), "limit_bytes": maxBodyBytes})
 		return
 	}
 

@@ -90,6 +90,7 @@ These are deliberate portfolio boundaries rather than hidden production claims:
 
 - Configuration is file/environment driven rather than stored in a replicated control-plane database.
 - Request bodies are buffered up to the configured limit so they can be replayed safely on retry.
+- `max_request_body_bytes` can be set on an individual route; when omitted, the server-wide limit is used. Oversized requests receive 413 before any backend is selected.
 - WebSocket upgrades are proxied, but WebSocket connections are not retried after establishment.
 - TLS termination and certificate lifecycle are delegated to Cloud Run/Kubernetes ingress in deployment examples.
 - No service discovery protocol is implemented; backend endpoints come from config.
