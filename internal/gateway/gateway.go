@@ -167,7 +167,7 @@ func (g *Gateway) WatchConfig(ctx context.Context, interval time.Duration) {
 func (g *Gateway) HealthChecker() *health.Checker {
 	set := g.routes.Load()
 	return health.New(g.healthTargets, set.Config.Health.Interval.Std(), set.Config.Health.Timeout.Std(),
-		set.Config.Health.FailureThreshold, set.Config.Health.SuccessThreshold, g.metrics)
+		set.Config.Health.FailureThreshold, set.Config.Health.SuccessThreshold, set.Config.Health.MaxConcurrent, g.metrics)
 }
 
 func (g *Gateway) healthTargets() []health.Target {

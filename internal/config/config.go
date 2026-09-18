@@ -50,6 +50,7 @@ type HealthConfig struct {
 	Timeout          Duration `json:"timeout"`
 	FailureThreshold int      `json:"failure_threshold"`
 	SuccessThreshold int      `json:"success_threshold"`
+	MaxConcurrent    int      `json:"max_concurrent"`
 }
 type ObservabilityConfig struct {
 	ServiceName string `json:"service_name"`
@@ -140,6 +141,9 @@ func applyDefaults(cfg *Config) {
 	if cfg.Health.SuccessThreshold == 0 {
 		cfg.Health.SuccessThreshold = 1
 	}
+	if cfg.Health.MaxConcurrent == 0 {
+		cfg.Health.MaxConcurrent = 16
+	}
 	if cfg.Observability.ServiceName == "" {
 		cfg.Observability.ServiceName = "gatego"
 	}
@@ -180,6 +184,9 @@ func applyDefaults(cfg *Config) {
 	}
 }
 func validate(cfg *Config) error {
+	if cfg.Health.MaxConcurrent < 1 {
+		return errors.New("health max_concurrent must be positive")
+	}
 	if len(cfg.Routes) == 0 {
 		return errors.New("config must define at least one route")
 	}

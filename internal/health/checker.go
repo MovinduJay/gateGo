@@ -24,12 +24,16 @@ type Checker struct {
 	failureThreshold int
 	successThreshold int
 	metrics          *metrics.Metrics
+	sem              chan struct{}
 }
 
-func New(provider Provider, interval, timeout time.Duration, failureThreshold, successThreshold int, m *metrics.Metrics) *Checker {
+func New(provider Provider, interval, timeout time.Duration, failureThreshold, successThreshold, maxConcurrent int, m *metrics.Metrics) *Checker {
+	if maxConcurrent < 1 {
+		maxConcurrent = 16
+	}
 	return &Checker{
 		client: &http.Client{Timeout: timeout}, provider: provider, interval: interval,
-		failureThreshold: failureThreshold, successThreshold: successThreshold, metrics: m,
+		failureThreshold: failureThreshold, successThreshold: successThreshold, metrics: m, sem: make(chan struct{}, maxConcurrent),
 	}
 }
 
@@ -49,7 +53,14 @@ func (c *Checker) Run(ctx context.Context) {
 
 func (c *Checker) check(ctx context.Context) {
 	for _, target := range c.provider() {
-		go c.checkOne(ctx, target)
+		go func(target Target) {
+			select {
+			case c.sem <- struct{}{}:
+				defer func() { <-c.sem }()
+				c.checkOne(ctx, target)
+			case <-ctx.Done():
+			}
+		}(target)
 	}
 }
 

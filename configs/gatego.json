@@ -11,7 +11,8 @@
     "interval": "3s",
     "timeout": "1s",
     "failure_threshold": 2,
-    "success_threshold": 1
+    "success_threshold": 1,
+    "max_concurrent": 16
   },
   "observability": { "service_name": "gatego" },
   "routes": [

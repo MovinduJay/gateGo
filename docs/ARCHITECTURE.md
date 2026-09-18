@@ -31,6 +31,8 @@ A route can favor larger backends without permanently starving smaller ones. The
 ### Health checks and circuit breakers are separate
 Health checks are proactive and periodic. The circuit breaker reacts to real request failures immediately. A backend must be both healthy and circuit-eligible before it can receive traffic.
 
+Health checks use bounded concurrency (`health.max_concurrent`, default 16), preventing a large backend set or slow health endpoints from creating an unbounded connection burst.
+
 ### Retry correctness
 GateGo retries idempotent methods (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`) automatically. `POST` and `PATCH` are retried only when the client supplies `Idempotency-Key`. This avoids turning a network retry into duplicate business side effects.
 
