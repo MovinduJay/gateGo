@@ -1,6 +1,54 @@
 # GateGo
 
-GateGo is a cloud-native Go API gateway with weighted load balancing, active health checks, retries, circuit breaking, JWT authentication, local or Redis-backed token-bucket rate limiting, metrics, graceful shutdown, and atomic configuration reload.
+GateGo is a resilient Go API gateway that keeps traffic flowing when an upstream fails. It combines weighted load balancing, active health checks, bounded retries, circuit breakers, JWT authentication, shared Redis rate limiting, graceful draining, metrics, traces, and atomic configuration reloads.
+
+```mermaid
+flowchart LR
+    C[Client] --> G1[GateGo :8080]
+    C --> G2[GateGo :8081]
+    G1 --> R[(Redis shared rate limits)]
+    G2 --> R
+    G1 --> A[Backend A weight 3]
+    G1 --> B[Backend B weight 1]
+    G1 --> D[Backend C weight 1]
+    G2 --> A
+    G2 --> B
+    G2 --> D
+    G1 --> O[OpenTelemetry Collector]
+    G2 --> O
+    P[Prometheus] --> G1
+    P --> G2
+    F[Grafana] --> P
+```
+
+## See it work
+
+Prerequisites: Go, Docker with Compose, `curl`, and `make`.
+
+```bash
+make demo
+```
+
+The demo builds the complete two-gateway topology, waits for readiness, calls public and JWT-protected routes, prints a metrics sample, forces backend B to return `503`, and shows B's circuit opening while requests continue through A and C. The stack remains available for inspection; stop it with `make compose-down`.
+
+On Windows without `make`, run:
+
+```powershell
+./scripts/smoke.ps1
+```
+
+## Why these choices
+
+| Choice | Why | Trade-off |
+|---|---|---|
+| Go and mostly its standard library | Small binaries, explicit concurrency, and a network stack suitable for a gateway hot path | More infrastructure code is implemented directly |
+| Two gateway replicas with Redis | Demonstrates horizontal scaling while enforcing one global rate-limit bucket | Redis failure falls back to locally consistent limits |
+| Weighted round robin | Predictable traffic allocation that is easy to inspect and test | It does not automatically account for backend latency |
+| Health checks plus circuit breakers | Health checks detect readiness proactively; circuits react immediately to real request failures | Two independent state signals must be understood operationally |
+| Retry budgets and backend bulkheads | Prevent one failed replica from amplifying load into healthy replicas | Overload is rejected deliberately instead of queued indefinitely |
+| Atomic JSON reloads | Invalid configuration never replaces the last-known-good route set | This is not a distributed control plane |
+| Prometheus and OpenTelemetry | Metrics explain aggregate behavior while traces explain individual requests | Full observability adds three demo containers |
+| Multi-stage container builds | The compiler stays out of the runtime image, reducing size and attack surface | Builds have an additional stage |
 
 Retries are contained by per-route concurrency budgets and each backend has an independent bulkhead. Circuit thresholds, cooldowns, bulkhead capacity, and retry capacity are configurable per route through the `resilience` object.
 

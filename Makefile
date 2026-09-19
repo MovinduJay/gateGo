@@ -1,4 +1,7 @@
-.PHONY: test test-unit test-integration build run token compose-up compose-down observe load benchmark resilience
+.PHONY: demo test test-unit test-integration build run token compose-up compose-down observe load benchmark resilience
+
+demo:
+	sh ./scripts/smoke.sh
 
 test:
 	go test ./... -count=1
