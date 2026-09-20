@@ -31,6 +31,14 @@ make demo
 
 The demo builds the complete two-gateway topology, waits for readiness, calls public and JWT-protected routes, prints a metrics sample, forces backend B to return `503`, and shows B's circuit opening while requests continue through A and C. The stack remains available for inspection; stop it with `make compose-down`.
 
+Generate a repeatable failure matrix and Markdown evidence report with:
+
+```bash
+make chaos-report
+```
+
+This tests backend latency, persistent 503 responses, a stopped backend process, Redis interruption, and full recovery. See [the chaos testing guide](docs/CHAOS_TESTING.md) for report contents and parameters.
+
 On Windows without `make`, run:
 
 ```powershell

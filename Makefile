@@ -1,7 +1,10 @@
-.PHONY: demo test test-unit test-integration build run token compose-up compose-down observe load benchmark resilience
+.PHONY: demo chaos-report test test-unit test-integration build run token compose-up compose-down observe load benchmark resilience
 
 demo:
 	sh ./scripts/smoke.sh
+
+chaos-report:
+	powershell -ExecutionPolicy Bypass -File scripts/chaos-report.ps1
 
 test:
 	go test ./... -count=1
