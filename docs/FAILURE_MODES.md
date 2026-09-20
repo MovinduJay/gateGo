@@ -15,6 +15,7 @@
 | All route circuits open | Report not ready until a probe or operator reset restores eligibility | Circuit-aware readiness |
 | Backend needs maintenance | Stop new selections while allowing in-flight work to finish | Administrative drain |
 | Route concurrency is exhausted | Return 503 with `Retry-After` before consuming upstream capacity | Route admission control |
+| Client disconnects mid-request | Cancel upstream work without recording a backend failure or retrying | Context-aware cancellation classification |
 
 ### Failure-amplification containment
 

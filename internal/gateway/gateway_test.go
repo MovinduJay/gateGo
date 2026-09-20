@@ -1,12 +1,14 @@
 package gateway
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/example/gatego/internal/config"
 	"github.com/example/gatego/internal/metrics"
@@ -252,6 +254,47 @@ func TestConfigValidationDoesNotApplyCandidate(t *testing.T) {
 	}
 	if rr := validate(`{"routes":[]}`); rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), `"status":"invalid"`) {
 		t.Fatalf("invalid candidate accepted: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestClientCancellationDoesNotTripBackendCircuit(t *testing.T) {
+	started := make(chan struct{})
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer backend.Close()
+	cfg, err := config.Parse([]byte(`{"routes":[{"name":"api","path_prefix":"/api","retries":2,"timeout":"5s","backends":[{"url":"` + backend.URL + `"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := metrics.New()
+	gw, err := New("", cfg, "secret", "admin", nil, m, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/api/cancel", nil).WithContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		gw.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+	<-started
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("gateway did not stop work after client cancellation")
+	}
+	backendState := gw.routes.Load().Routes[0].Balancer.Backends()[0]
+	if snapshot := backendState.Breaker.Snapshot(); snapshot.Failures != 0 || snapshot.State.String() != "closed" {
+		t.Fatalf("client cancellation poisoned circuit: %+v", snapshot)
+	}
+	metricsRR := httptest.NewRecorder()
+	m.ServeHTTP(metricsRR, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(metricsRR.Body.String(), `gatego_client_canceled_total{route="api",backend="`+backendState.URL.Host+`"} 1`) {
+		t.Fatalf("client cancellation metric missing: %s", metricsRR.Body.String())
 	}
 }
 

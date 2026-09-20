@@ -542,6 +542,10 @@ attempts:
 				<-route.retrySlots
 			}
 			cancel()
+			if r.Context().Err() != nil {
+				g.metrics.IncClientCanceled(route.Config.Name, backendName)
+				return
+			}
 			if backend.Breaker.Failure() {
 				g.recordCircuitState(route.Config.Name, backend)
 			}
@@ -628,6 +632,10 @@ func (g *Gateway) serveWebSocket(w http.ResponseWriter, r *http.Request, route *
 		return nil
 	}
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, e error) {
+		if req.Context().Err() != nil {
+			g.metrics.IncClientCanceled(route.Config.Name, backend.URL.Host)
+			return
+		}
 		if backend.Breaker.Failure() {
 			g.recordCircuitState(route.Config.Name, backend)
 		}
