@@ -80,6 +80,8 @@ curl -X POST http://localhost:8080/admin/reload \
 
 `POST /admin/config/validate` accepts a candidate JSON configuration, applies the same defaults and validation rules as startup/reload, and reports whether it is valid without changing the active route set.
 
+Validation rejects ambiguous definitions such as duplicate path prefixes, duplicate backend URLs within a route, and duplicate or blank HTTP methods. Methods are normalized to uppercase before the configuration becomes active.
+
 ### Circuit operations
 
 `GET /admin/backends` reports active health, circuit state, accumulated failures, the configured failure threshold, recovery wait, and bulkhead occupancy. `POST /admin/circuits/reset?route=<name>&backend=<url-or-host>` clears circuit state after an operator has independently confirmed recovery. Omitting `backend` resets all circuits on the named route. Both endpoints require `X-Admin-Key`.

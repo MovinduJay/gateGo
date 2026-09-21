@@ -155,6 +155,9 @@ func applyDefaults(cfg *Config) {
 	}
 	for i := range cfg.Routes {
 		r := &cfg.Routes[i]
+		for j := range r.Methods {
+			r.Methods[j] = strings.ToUpper(strings.TrimSpace(r.Methods[j]))
+		}
 		if r.PathPrefix == "" {
 			r.PathPrefix = "/"
 		}
@@ -200,6 +203,7 @@ func validate(cfg *Config) error {
 		return errors.New("config must define at least one route")
 	}
 	seen := map[string]struct{}{}
+	seenPaths := map[string]string{}
 	for _, r := range cfg.Routes {
 		if strings.TrimSpace(r.Name) == "" {
 			return errors.New("every route needs a name")
@@ -211,6 +215,24 @@ func validate(cfg *Config) error {
 		if !strings.HasPrefix(r.PathPrefix, "/") {
 			return fmt.Errorf("route %q path_prefix must start with /", r.Name)
 		}
+		path := strings.TrimSuffix(r.PathPrefix, "/")
+		if path == "" {
+			path = "/"
+		}
+		if previous, ok := seenPaths[path]; ok {
+			return fmt.Errorf("routes %q and %q have duplicate path_prefix %q", previous, r.Name, path)
+		}
+		seenPaths[path] = r.Name
+		methods := map[string]struct{}{}
+		for _, method := range r.Methods {
+			if method == "" {
+				return fmt.Errorf("route %q contains a blank method", r.Name)
+			}
+			if _, ok := methods[method]; ok {
+				return fmt.Errorf("route %q contains duplicate method %q", r.Name, method)
+			}
+			methods[method] = struct{}{}
+		}
 		if len(r.Backends) == 0 {
 			return fmt.Errorf("route %q needs a backend", r.Name)
 		}
@@ -220,10 +242,16 @@ func validate(cfg *Config) error {
 		if r.Resilience.CircuitFailureThreshold < 1 || r.Resilience.CircuitCooldown.Std() <= 0 || r.Resilience.MaxConcurrentPerBackend < 1 || r.Resilience.MaxConcurrentRetries < 1 || r.Resilience.MaxConcurrentRequests < 1 {
 			return fmt.Errorf("route %q resilience values must be positive", r.Name)
 		}
+		backends := map[string]struct{}{}
 		for _, b := range r.Backends {
 			if !strings.HasPrefix(b.URL, "http://") && !strings.HasPrefix(b.URL, "https://") {
 				return fmt.Errorf("route %q backend must be http(s)", r.Name)
 			}
+			normalizedURL := strings.TrimSuffix(b.URL, "/")
+			if _, ok := backends[normalizedURL]; ok {
+				return fmt.Errorf("route %q contains duplicate backend %q", r.Name, normalizedURL)
+			}
+			backends[normalizedURL] = struct{}{}
 		}
 	}
 	return nil

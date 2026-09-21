@@ -17,6 +17,37 @@ func TestDurationMarshalsAsHumanReadableString(t *testing.T) {
 	}
 }
 
+func TestParseRejectsAmbiguousRouteConfiguration(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"duplicate path", `{"routes":[{"name":"one","path_prefix":"/api","backends":[{"url":"http://a"}]},{"name":"two","path_prefix":"/api/","backends":[{"url":"http://b"}]}]}`, "duplicate path_prefix"},
+		{"duplicate backend", `{"routes":[{"name":"api","backends":[{"url":"http://a"},{"url":"http://a/"}]}]}`, "duplicate backend"},
+		{"duplicate method", `{"routes":[{"name":"api","methods":["get","GET"],"backends":[{"url":"http://a"}]}]}`, "duplicate method"},
+		{"blank method", `{"routes":[{"name":"api","methods":["  "],"backends":[{"url":"http://a"}]}]}`, "blank method"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.raw))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Parse() error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseNormalizesMethods(t *testing.T) {
+	cfg, err := Parse([]byte(`{"routes":[{"name":"api","methods":[" get ","post"],"backends":[{"url":"http://a"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(cfg.Routes[0].Methods, ","); got != "GET,POST" {
+		t.Fatalf("normalized methods = %q", got)
+	}
+}
+
 func TestParseAndSortLongestPrefixFirst(t *testing.T) {
 	raw := []byte(`{
 	  "routes": [
