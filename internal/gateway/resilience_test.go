@@ -142,6 +142,36 @@ func TestDeadAndSlowBackendsFailOver(t *testing.T) {
 	}
 }
 
+func TestExhaustedUpstreamTimeoutReturnsGatewayTimeout(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer slow.Close()
+	gw := testGateway(t, fmt.Sprintf(`[{"url":%q,"weight":1}]`, slow.URL), 0, "20ms", nil, metrics.New())
+
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://gateway/api/slow", nil))
+	if rr.Code != http.StatusGatewayTimeout || !strings.Contains(rr.Body.String(), "upstream timeout") {
+		t.Fatalf("timeout response = %d %s, want 504", rr.Code, rr.Body.String())
+	}
+}
+
+func TestConnectionFailureReturnsBadGateway(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadURL := "http://" + listener.Addr().String()
+	_ = listener.Close()
+	gw := testGateway(t, fmt.Sprintf(`[{"url":%q,"weight":1}]`, deadURL), 0, "100ms", nil, metrics.New())
+
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://gateway/api/dead", nil))
+	if rr.Code != http.StatusBadGateway || !strings.Contains(rr.Body.String(), "upstream unavailable") {
+		t.Fatalf("connection-failure response = %d %s, want 502", rr.Code, rr.Body.String())
+	}
+}
+
 func TestGracefulShutdownDrainsInflightRequest(t *testing.T) {
 	started := make(chan struct{})
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

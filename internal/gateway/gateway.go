@@ -617,8 +617,9 @@ attempts:
 		return
 	}
 	g.logger.Warn("upstream request failed", "route", route.Config.Name, "error", lastErr)
-	g.record(route.Config.Name, "", http.StatusBadGateway, started)
-	g.respondJSON(w, http.StatusBadGateway, map[string]any{"error": "upstream unavailable"})
+	status, message := upstreamFailureResponse(lastErr)
+	g.record(route.Config.Name, "", status, started)
+	g.respondJSON(w, status, map[string]any{"error": message})
 }
 
 func (g *Gateway) serveWebSocket(w http.ResponseWriter, r *http.Request, route *Route, started time.Time) {
@@ -709,6 +710,13 @@ func retrySafe(r *http.Request) bool {
 
 func retryableStatus(code int) bool {
 	return code == http.StatusInternalServerError || code == http.StatusBadGateway || code == http.StatusServiceUnavailable || code == http.StatusGatewayTimeout
+}
+
+func upstreamFailureResponse(err error) (int, string) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return http.StatusGatewayTimeout, "upstream timeout"
+	}
+	return http.StatusBadGateway, "upstream unavailable"
 }
 
 func sleepBackoff(ctx context.Context, attempt int) bool {
