@@ -74,6 +74,13 @@ func TestCircuitAwareReadinessAndAdminReset(t *testing.T) {
 	if gw.Ready() {
 		t.Fatal("gateway must not be ready when its only backend circuit is open")
 	}
+	readinessReq := httptest.NewRequest(http.MethodGet, "http://gateway/admin/readiness", nil)
+	readinessReq.Header.Set("X-Admin-Key", "admin")
+	readinessRR := httptest.NewRecorder()
+	gw.ServeHTTP(readinessRR, readinessReq)
+	if readinessRR.Code != http.StatusServiceUnavailable || !strings.Contains(readinessRR.Body.String(), `"eligible":0`) || !strings.Contains(readinessRR.Body.String(), `"open_circuits":1`) {
+		t.Fatalf("readiness diagnostics = %d %s", readinessRR.Code, readinessRR.Body.String())
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "http://gateway/admin/circuits/reset?route=api&backend="+target.URL.Host, nil)
 	rr := httptest.NewRecorder()

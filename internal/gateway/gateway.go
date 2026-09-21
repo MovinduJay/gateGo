@@ -204,20 +204,48 @@ func (g *Gateway) healthTargets() []health.Target {
 }
 
 func (g *Gateway) Ready() bool {
-	set := g.routes.Load()
-	for _, route := range set.Routes {
-		ok := false
-		for _, b := range route.Balancer.Backends() {
-			if !b.Draining.Load() && b.Healthy.Load() && b.Breaker.Available() {
-				ok = true
-				break
-			}
-		}
-		if !ok {
+	for _, route := range g.readinessSnapshot() {
+		if !route.Ready {
 			return false
 		}
 	}
 	return true
+}
+
+type routeReadiness struct {
+	Route    string `json:"route"`
+	Ready    bool   `json:"ready"`
+	Backends int    `json:"backends"`
+	Healthy  int    `json:"healthy"`
+	Eligible int    `json:"eligible"`
+	Open     int    `json:"open_circuits"`
+	Draining int    `json:"draining"`
+}
+
+func (g *Gateway) readinessSnapshot() []routeReadiness {
+	set := g.routes.Load()
+	result := make([]routeReadiness, 0, len(set.Routes))
+	for _, route := range set.Routes {
+		state := routeReadiness{Route: route.Config.Name}
+		for _, backend := range route.Balancer.Backends() {
+			state.Backends++
+			if backend.Healthy.Load() {
+				state.Healthy++
+			}
+			if backend.Draining.Load() {
+				state.Draining++
+			}
+			if backend.Breaker.State().String() == "open" {
+				state.Open++
+			}
+			if !backend.Draining.Load() && backend.Healthy.Load() && backend.Breaker.Available() {
+				state.Eligible++
+			}
+		}
+		state.Ready = state.Eligible > 0
+		result = append(result, state)
+	}
+	return result
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -295,6 +323,22 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 		} else {
 			g.respondJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "not_ready"})
 		}
+		return true
+	case "/admin/readiness":
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "GET required"})
+			return true
+		}
+		if g.adminKey == "" || r.Header.Get("X-Admin-Key") != g.adminKey {
+			g.respondJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return true
+		}
+		status := http.StatusOK
+		if !g.Ready() {
+			status = http.StatusServiceUnavailable
+		}
+		g.respondJSON(w, status, map[string]any{"ready": status == http.StatusOK, "routes": g.readinessSnapshot()})
 		return true
 	case "/admin/reload":
 		if r.Method != http.MethodPost {

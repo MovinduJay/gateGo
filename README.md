@@ -116,6 +116,8 @@ Invoke-WebRequest -Method Post -Headers @{"X-Admin-Key"="dev-admin-key"} "http:/
 
 `GET /readyz` is circuit-aware: it returns unavailable when any configured route has no healthy, circuit-eligible backend.
 
+Authenticated `GET /admin/readiness` adds per-route counts for total, healthy, eligible, open-circuit, and draining backends. This keeps the Kubernetes probe response small while giving operators a concrete reason for an unhealthy gateway.
+
 Backends can be drained before maintenance without interrupting requests already in flight. `POST` begins draining and `DELETE` makes the backend eligible for new traffic again:
 
 ```powershell
