@@ -57,6 +57,7 @@ On Windows without `make`, run:
 | Atomic JSON reloads | Invalid configuration never replaces the last-known-good route set | This is not a distributed control plane |
 | Prometheus and OpenTelemetry | Metrics explain aggregate behavior while traces explain individual requests | Full observability adds three demo containers |
 | Multi-stage container builds | The compiler stays out of the runtime image, reducing size and attack surface | Builds have an additional stage |
+| Header and body size limits | Reject oversized input before it consumes disproportionate gateway or backend memory | Limits must be raised deliberately for unusual APIs |
 
 Retries are contained by per-route concurrency budgets and each backend has an independent bulkhead. Circuit thresholds, cooldowns, bulkhead capacity, and retry capacity are configurable per route through the `resilience` object.
 

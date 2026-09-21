@@ -42,12 +42,13 @@ type Config struct {
 	Routes        []RouteConfig       `json:"routes"`
 }
 type ServerConfig struct {
-	Listen               string   `json:"listen"`
-	ReadHeaderTimeout    Duration `json:"read_header_timeout"`
-	IdleTimeout          Duration `json:"idle_timeout"`
-	ShutdownTimeout      Duration `json:"shutdown_timeout"`
-	ConfigReloadInterval Duration `json:"config_reload_interval"`
-	MaxRequestBodyBytes  int64    `json:"max_request_body_bytes"`
+	Listen                string   `json:"listen"`
+	ReadHeaderTimeout     Duration `json:"read_header_timeout"`
+	IdleTimeout           Duration `json:"idle_timeout"`
+	ShutdownTimeout       Duration `json:"shutdown_timeout"`
+	ConfigReloadInterval  Duration `json:"config_reload_interval"`
+	MaxRequestBodyBytes   int64    `json:"max_request_body_bytes"`
+	MaxRequestHeaderBytes int      `json:"max_request_header_bytes"`
 }
 type HealthConfig struct {
 	Interval         Duration `json:"interval"`
@@ -135,6 +136,9 @@ func applyDefaults(cfg *Config) {
 	if cfg.Server.MaxRequestBodyBytes == 0 {
 		cfg.Server.MaxRequestBodyBytes = 2 << 20
 	}
+	if cfg.Server.MaxRequestHeaderBytes == 0 {
+		cfg.Server.MaxRequestHeaderBytes = 1 << 20
+	}
 	if cfg.Health.Interval == 0 {
 		cfg.Health.Interval = Duration(5 * time.Second)
 	}
@@ -196,6 +200,9 @@ func applyDefaults(cfg *Config) {
 	}
 }
 func validate(cfg *Config) error {
+	if cfg.Server.MaxRequestHeaderBytes < 1 {
+		return errors.New("server max_request_header_bytes must be positive")
+	}
 	if cfg.Health.MaxConcurrent < 1 {
 		return errors.New("health max_concurrent must be positive")
 	}

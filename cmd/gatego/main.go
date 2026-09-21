@@ -63,7 +63,13 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", m)
 	mux.Handle("/", gw)
-	server := &http.Server{Addr: cfg.Server.Listen, Handler: observability.NewHTTPHandler(mux), ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout.Std(), IdleTimeout: cfg.Server.IdleTimeout.Std()}
+	server := &http.Server{
+		Addr:              cfg.Server.Listen,
+		Handler:           observability.NewHTTPHandler(mux),
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout.Std(),
+		IdleTimeout:       cfg.Server.IdleTimeout.Std(),
+		MaxHeaderBytes:    cfg.Server.MaxRequestHeaderBytes,
+	}
 
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, syscall.SIGHUP)

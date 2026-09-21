@@ -48,6 +48,20 @@ func TestParseNormalizesMethods(t *testing.T) {
 	}
 }
 
+func TestServerHeaderLimitDefaultsAndValidation(t *testing.T) {
+	cfg, err := Parse([]byte(`{"routes":[{"name":"api","backends":[{"url":"http://a"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Server.MaxRequestHeaderBytes != 1<<20 {
+		t.Fatalf("default max header bytes = %d", cfg.Server.MaxRequestHeaderBytes)
+	}
+	_, err = Parse([]byte(`{"server":{"max_request_header_bytes":-1},"routes":[{"name":"api","backends":[{"url":"http://a"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "max_request_header_bytes must be positive") {
+		t.Fatalf("negative header limit error = %v", err)
+	}
+}
+
 func TestParseAndSortLongestPrefixFirst(t *testing.T) {
 	raw := []byte(`{
 	  "routes": [
