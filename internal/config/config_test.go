@@ -1,10 +1,21 @@
 package config
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestDurationMarshalsAsHumanReadableString(t *testing.T) {
+	raw, err := json.Marshal(Duration(1500 * time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `"1.5s"` {
+		t.Fatalf("duration JSON = %s, want %q", raw, `"1.5s"`)
+	}
+}
 
 func TestParseAndSortLongestPrefixFirst(t *testing.T) {
 	raw := []byte(`{

@@ -104,6 +104,8 @@ A candidate configuration can be validated without applying it:
 Invoke-WebRequest -Method Post -Headers @{"X-Admin-Key"="dev-admin-key"} -ContentType "application/json" -InFile configs/gatego.json http://localhost:8080/admin/config/validate
 ```
 
+The effective configuration, including defaults applied by GateGo, is available to authenticated operators at `GET /admin/config`. Secrets are supplied through environment variables and are not part of this response.
+
 Authenticated `GET /admin/backends` reports health and circuit state for every route/backend pair.
 
 Operators can manually clear circuit state after an emergency repair. The route is required; `backend` may be either the backend URL or host and can be omitted to reset every backend on the route:

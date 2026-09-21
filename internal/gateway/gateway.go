@@ -338,6 +338,18 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 		}
 		g.respondJSON(w, http.StatusOK, map[string]any{"status": "valid", "routes": len(candidate.Routes)})
 		return true
+	case "/admin/config":
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "GET required"})
+			return true
+		}
+		if g.adminKey == "" || r.Header.Get("X-Admin-Key") != g.adminKey {
+			g.respondJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return true
+		}
+		g.respondJSON(w, http.StatusOK, g.routes.Load().Config)
+		return true
 	case "/admin/backends":
 		if r.Method != http.MethodGet {
 			g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "GET required"})

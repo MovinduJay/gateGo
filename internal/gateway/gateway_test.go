@@ -98,6 +98,40 @@ func TestCircuitAwareReadinessAndAdminReset(t *testing.T) {
 	}
 }
 
+func TestAdminConfigReturnsEffectiveConfiguration(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer backend.Close()
+	cfg, err := config.Parse([]byte(`{"routes":[{"name":"api","path_prefix":"/api","backends":[{"url":"` + backend.URL + `"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := func(method, key string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "http://gateway/admin/config", nil)
+		req.Header.Set("X-Admin-Key", key)
+		rr := httptest.NewRecorder()
+		gw.ServeHTTP(rr, req)
+		return rr
+	}
+	if rr := request(http.MethodGet, ""); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status = %d, want 401", rr.Code)
+	}
+	if rr := request(http.MethodPost, "admin"); rr.Code != http.StatusMethodNotAllowed || rr.Header().Get("Allow") != http.MethodGet {
+		t.Fatalf("wrong-method response = %d allow=%q", rr.Code, rr.Header().Get("Allow"))
+	}
+	rr := request(http.MethodGet, "admin")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("config status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"timeout":"3s"`) || !strings.Contains(rr.Body.String(), `"max_concurrent_requests":256`) {
+		t.Fatalf("effective defaults missing from config: %s", rr.Body.String())
+	}
+}
+
 func TestBackendDrainStopsNewTrafficAndPreservesInflight(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
