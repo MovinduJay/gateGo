@@ -36,6 +36,8 @@ type Route struct {
 	Balancer     *balancer.WeightedRoundRobin
 	retrySlots   chan struct{}
 	requestSlots chan struct{}
+	allowCIDRs   []*net.IPNet
+	denyCIDRs    []*net.IPNet
 }
 
 type routeSet struct {
@@ -105,7 +107,11 @@ func buildRouteSet(cfg *config.Config) (*routeSet, error) {
 		if err != nil {
 			return nil, fmt.Errorf("route %s: %w", rc.Name, err)
 		}
-		set.Routes = append(set.Routes, &Route{Config: rc, Balancer: lb, retrySlots: make(chan struct{}, rc.Resilience.MaxConcurrentRetries), requestSlots: make(chan struct{}, rc.Resilience.MaxConcurrentRequests)})
+		set.Routes = append(set.Routes, &Route{
+			Config: rc, Balancer: lb,
+			retrySlots: make(chan struct{}, rc.Resilience.MaxConcurrentRetries), requestSlots: make(chan struct{}, rc.Resilience.MaxConcurrentRequests),
+			allowCIDRs: parseCIDRs(rc.Access.AllowCIDRs), denyCIDRs: parseCIDRs(rc.Access.DenyCIDRs),
+		})
 	}
 	return set, nil
 }
@@ -270,6 +276,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", strings.Join(route.Config.Methods, ", "))
 		g.record(route.Config.Name, "", http.StatusMethodNotAllowed, started)
 		g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed", "request_id": requestID})
+		return
+	}
+	if !route.allows(clientIdentityIP(r, g.trustForwarded)) {
+		g.record(route.Config.Name, "", http.StatusForbidden, started)
+		g.respondJSON(w, http.StatusForbidden, map[string]any{"error": "source address is not allowed", "request_id": requestID})
 		return
 	}
 	select {
@@ -802,6 +813,36 @@ func clientIdentityIP(r *http.Request, trustForwarded bool) string {
 		}
 	}
 	return peerIP(r)
+}
+
+func parseCIDRs(values []string) []*net.IPNet {
+	result := make([]*net.IPNet, 0, len(values))
+	for _, value := range values {
+		_, network, _ := net.ParseCIDR(value)
+		result = append(result, network)
+	}
+	return result
+}
+
+func (r *Route) allows(address string) bool {
+	ip := net.ParseIP(address)
+	if ip == nil {
+		return len(r.allowCIDRs) == 0
+	}
+	for _, network := range r.denyCIDRs {
+		if network.Contains(ip) {
+			return false
+		}
+	}
+	if len(r.allowCIDRs) == 0 {
+		return true
+	}
+	for _, network := range r.allowCIDRs {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func sanitizeInboundHeaders(h http.Header, trustForwarded bool) {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"sort"
 	"strings"
@@ -70,7 +71,13 @@ type RouteConfig struct {
 	Timeout             Duration         `json:"timeout"`
 	Retries             int              `json:"retries"`
 	MaxRequestBodyBytes int64            `json:"max_request_body_bytes"`
+	Access              AccessConfig     `json:"access"`
 	Backends            []BackendConfig  `json:"backends"`
+}
+
+type AccessConfig struct {
+	AllowCIDRs []string `json:"allow_cidrs"`
+	DenyCIDRs  []string `json:"deny_cidrs"`
 }
 
 type ResilienceConfig struct {
@@ -245,6 +252,11 @@ func validate(cfg *Config) error {
 		}
 		if r.MaxRequestBodyBytes < 0 {
 			return fmt.Errorf("route %q max_request_body_bytes cannot be negative", r.Name)
+		}
+		for _, cidr := range append(append([]string{}, r.Access.AllowCIDRs...), r.Access.DenyCIDRs...) {
+			if _, _, err := net.ParseCIDR(cidr); err != nil {
+				return fmt.Errorf("route %q contains invalid access CIDR %q", r.Name, cidr)
+			}
 		}
 		if r.Resilience.CircuitFailureThreshold < 1 || r.Resilience.CircuitCooldown.Std() <= 0 || r.Resilience.MaxConcurrentPerBackend < 1 || r.Resilience.MaxConcurrentRetries < 1 || r.Resilience.MaxConcurrentRequests < 1 {
 			return fmt.Errorf("route %q resilience values must be positive", r.Name)

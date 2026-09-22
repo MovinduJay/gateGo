@@ -61,6 +61,8 @@ On Windows without `make`, run:
 
 Retries are contained by per-route concurrency budgets and each backend has an independent bulkhead. Circuit thresholds, cooldowns, bulkhead capacity, and retry capacity are configurable per route through the `resilience` object.
 
+Routes may also define `access.allow_cidrs` and `access.deny_cidrs`. Deny rules take precedence, and forwarded client addresses are only considered when `GATEGO_TRUST_FORWARDED_HEADERS=true`; otherwise GateGo uses the direct peer address to prevent header spoofing.
+
 ## Run locally
 
 Start three demo backends, then GateGo with the local configuration:

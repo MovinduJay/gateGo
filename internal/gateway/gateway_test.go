@@ -139,6 +139,43 @@ func TestAdminConfigReturnsEffectiveConfiguration(t *testing.T) {
 	}
 }
 
+func TestRouteAccessPolicyDenyOverridesAllow(t *testing.T) {
+	called := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	cfg, err := config.Parse([]byte(`{"routes":[{"name":"api","path_prefix":"/api","access":{"allow_cidrs":["192.0.2.0/24"],"deny_cidrs":["192.0.2.8/32"]},"backends":[{"url":"` + backend.URL + `"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := func(remote string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "http://gateway/api/test", nil)
+		req.RemoteAddr = remote + ":1234"
+		rr := httptest.NewRecorder()
+		gw.ServeHTTP(rr, req)
+		return rr
+	}
+	if rr := request("198.51.100.1"); rr.Code != http.StatusForbidden {
+		t.Fatalf("outside allow list status = %d, want 403", rr.Code)
+	}
+	if rr := request("192.0.2.8"); rr.Code != http.StatusForbidden {
+		t.Fatalf("explicitly denied status = %d, want 403", rr.Code)
+	}
+	if called {
+		t.Fatal("denied requests must not reach the backend")
+	}
+	if rr := request("192.0.2.9"); rr.Code != http.StatusOK {
+		t.Fatalf("allowed address status = %d, want 200", rr.Code)
+	}
+}
+
 func TestBackendDrainStopsNewTrafficAndPreservesInflight(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})

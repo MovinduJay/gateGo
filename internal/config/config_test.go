@@ -62,6 +62,13 @@ func TestServerHeaderLimitDefaultsAndValidation(t *testing.T) {
 	}
 }
 
+func TestParseValidatesAccessCIDRs(t *testing.T) {
+	_, err := Parse([]byte(`{"routes":[{"name":"api","access":{"allow_cidrs":["not-a-cidr"]},"backends":[{"url":"http://a"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "invalid access CIDR") {
+		t.Fatalf("invalid CIDR error = %v", err)
+	}
+}
+
 func TestParseAndSortLongestPrefixFirst(t *testing.T) {
 	raw := []byte(`{
 	  "routes": [
