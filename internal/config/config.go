@@ -72,12 +72,23 @@ type RouteConfig struct {
 	Retries             int              `json:"retries"`
 	MaxRequestBodyBytes int64            `json:"max_request_body_bytes"`
 	Access              AccessConfig     `json:"access"`
+	CORS                CORSConfig       `json:"cors"`
 	Backends            []BackendConfig  `json:"backends"`
 }
 
 type AccessConfig struct {
 	AllowCIDRs []string `json:"allow_cidrs"`
 	DenyCIDRs  []string `json:"deny_cidrs"`
+}
+
+type CORSConfig struct {
+	Enabled          bool     `json:"enabled"`
+	AllowedOrigins   []string `json:"allowed_origins"`
+	AllowedMethods   []string `json:"allowed_methods"`
+	AllowedHeaders   []string `json:"allowed_headers"`
+	ExposedHeaders   []string `json:"exposed_headers"`
+	AllowCredentials bool     `json:"allow_credentials"`
+	MaxAgeSeconds    int      `json:"max_age_seconds"`
 }
 
 type ResilienceConfig struct {
@@ -169,6 +180,9 @@ func applyDefaults(cfg *Config) {
 		for j := range r.Methods {
 			r.Methods[j] = strings.ToUpper(strings.TrimSpace(r.Methods[j]))
 		}
+		for j := range r.CORS.AllowedMethods {
+			r.CORS.AllowedMethods[j] = strings.ToUpper(strings.TrimSpace(r.CORS.AllowedMethods[j]))
+		}
 		if r.PathPrefix == "" {
 			r.PathPrefix = "/"
 		}
@@ -256,6 +270,19 @@ func validate(cfg *Config) error {
 		for _, cidr := range append(append([]string{}, r.Access.AllowCIDRs...), r.Access.DenyCIDRs...) {
 			if _, _, err := net.ParseCIDR(cidr); err != nil {
 				return fmt.Errorf("route %q contains invalid access CIDR %q", r.Name, cidr)
+			}
+		}
+		if r.CORS.Enabled {
+			if len(r.CORS.AllowedOrigins) == 0 {
+				return fmt.Errorf("route %q CORS requires at least one allowed origin", r.Name)
+			}
+			for _, origin := range r.CORS.AllowedOrigins {
+				if origin == "*" && r.CORS.AllowCredentials {
+					return fmt.Errorf("route %q CORS cannot combine wildcard origin with credentials", r.Name)
+				}
+			}
+			if r.CORS.MaxAgeSeconds < 0 {
+				return fmt.Errorf("route %q CORS max_age_seconds cannot be negative", r.Name)
 			}
 		}
 		if r.Resilience.CircuitFailureThreshold < 1 || r.Resilience.CircuitCooldown.Std() <= 0 || r.Resilience.MaxConcurrentPerBackend < 1 || r.Resilience.MaxConcurrentRetries < 1 || r.Resilience.MaxConcurrentRequests < 1 {

@@ -63,6 +63,8 @@ Retries are contained by per-route concurrency budgets and each backend has an i
 
 Routes may also define `access.allow_cidrs` and `access.deny_cidrs`. Deny rules take precedence, and forwarded client addresses are only considered when `GATEGO_TRUST_FORWARDED_HEADERS=true`; otherwise GateGo uses the direct peer address to prevent header spoofing.
 
+Browser-facing routes can define a `cors` policy with allowed origins, methods, headers, exposed headers, credential handling, and preflight cache duration. Unsafe wildcard-origin plus credential configurations are rejected before activation.
+
 ## Run locally
 
 Start three demo backends, then GateGo with the local configuration:

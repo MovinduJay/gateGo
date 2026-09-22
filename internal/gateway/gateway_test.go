@@ -176,6 +176,49 @@ func TestRouteAccessPolicyDenyOverridesAllow(t *testing.T) {
 	}
 }
 
+func TestRouteCORSPreflightAndResponsePolicy(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "https://unsafe.example")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	raw := `{"routes":[{"name":"api","path_prefix":"/api","methods":["GET"],"cors":{"enabled":true,"allowed_origins":["https://app.example"],"allowed_methods":["GET"],"allowed_headers":["Authorization"],"exposed_headers":["X-Request-ID"],"allow_credentials":true,"max_age_seconds":600},"backends":[{"url":"` + backend.URL + `"}]}]}`
+	cfg, err := config.Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	preflight := httptest.NewRequest(http.MethodOptions, "http://gateway/api/test", nil)
+	preflight.Header.Set("Origin", "https://app.example")
+	preflight.Header.Set("Access-Control-Request-Method", "GET")
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, preflight)
+	if rr.Code != http.StatusNoContent || rr.Header().Get("Access-Control-Max-Age") != "600" || rr.Header().Get("Access-Control-Allow-Credentials") != "true" {
+		t.Fatalf("preflight = %d headers=%v", rr.Code, rr.Header())
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "http://gateway/api/test", nil)
+	request.Header.Set("Origin", "https://app.example")
+	rr = httptest.NewRecorder()
+	gw.ServeHTTP(rr, request)
+	if rr.Code != http.StatusOK || rr.Header().Get("Access-Control-Allow-Origin") != "https://app.example" {
+		t.Fatalf("CORS response = %d origin=%q", rr.Code, rr.Header().Get("Access-Control-Allow-Origin"))
+	}
+
+	denied := httptest.NewRequest(http.MethodOptions, "http://gateway/api/test", nil)
+	denied.Header.Set("Origin", "https://evil.example")
+	denied.Header.Set("Access-Control-Request-Method", "GET")
+	rr = httptest.NewRecorder()
+	gw.ServeHTTP(rr, denied)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("denied preflight status = %d, want 403", rr.Code)
+	}
+}
+
 func TestBackendDrainStopsNewTrafficAndPreservesInflight(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})

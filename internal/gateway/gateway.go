@@ -272,15 +272,18 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.respondJSON(w, http.StatusNotFound, map[string]any{"error": "no route", "request_id": requestID})
 		return
 	}
+	if !route.allows(clientIdentityIP(r, g.trustForwarded)) {
+		g.record(route.Config.Name, "", http.StatusForbidden, started)
+		g.respondJSON(w, http.StatusForbidden, map[string]any{"error": "source address is not allowed", "request_id": requestID})
+		return
+	}
+	if g.handleCORS(w, r, route, started) {
+		return
+	}
 	if !config.MethodAllowed(route.Config, r.Method) {
 		w.Header().Set("Allow", strings.Join(route.Config.Methods, ", "))
 		g.record(route.Config.Name, "", http.StatusMethodNotAllowed, started)
 		g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed", "request_id": requestID})
-		return
-	}
-	if !route.allows(clientIdentityIP(r, g.trustForwarded)) {
-		g.record(route.Config.Name, "", http.StatusForbidden, started)
-		g.respondJSON(w, http.StatusForbidden, map[string]any{"error": "source address is not allowed", "request_id": requestID})
 		return
 	}
 	select {
@@ -659,6 +662,7 @@ attempts:
 		}
 		copyHeaders(w.Header(), resp.Header)
 		removeHopHeaders(w.Header())
+		applyCORSHeaders(w.Header(), route.Config.CORS, r.Header.Get("Origin"))
 		w.Header().Set("X-GateGo-Backend", backendName)
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)
@@ -839,6 +843,76 @@ func (r *Route) allows(address string) bool {
 	}
 	for _, network := range r.allowCIDRs {
 		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *Gateway) handleCORS(w http.ResponseWriter, r *http.Request, route *Route, started time.Time) bool {
+	policy := route.Config.CORS
+	origin := r.Header.Get("Origin")
+	if !policy.Enabled || origin == "" {
+		return false
+	}
+	if !corsOriginAllowed(policy, origin) {
+		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+			g.record(route.Config.Name, "", http.StatusForbidden, started)
+			g.respondJSON(w, http.StatusForbidden, map[string]any{"error": "CORS origin is not allowed"})
+			return true
+		}
+		return false
+	}
+	applyCORSHeaders(w.Header(), policy, origin)
+	requestedMethod := strings.ToUpper(strings.TrimSpace(r.Header.Get("Access-Control-Request-Method")))
+	if r.Method != http.MethodOptions || requestedMethod == "" {
+		return false
+	}
+	if !containsFold(policy.AllowedMethods, requestedMethod) {
+		g.record(route.Config.Name, "", http.StatusForbidden, started)
+		g.respondJSON(w, http.StatusForbidden, map[string]any{"error": "CORS method is not allowed"})
+		return true
+	}
+	w.WriteHeader(http.StatusNoContent)
+	g.record(route.Config.Name, "", http.StatusNoContent, started)
+	return true
+}
+
+func applyCORSHeaders(header http.Header, policy config.CORSConfig, origin string) {
+	if !policy.Enabled || origin == "" || !corsOriginAllowed(policy, origin) {
+		return
+	}
+	allowedOrigin := origin
+	if containsFold(policy.AllowedOrigins, "*") {
+		allowedOrigin = "*"
+	} else {
+		header.Add("Vary", "Origin")
+	}
+	header.Set("Access-Control-Allow-Origin", allowedOrigin)
+	if len(policy.AllowedMethods) > 0 {
+		header.Set("Access-Control-Allow-Methods", strings.Join(policy.AllowedMethods, ", "))
+	}
+	if len(policy.AllowedHeaders) > 0 {
+		header.Set("Access-Control-Allow-Headers", strings.Join(policy.AllowedHeaders, ", "))
+	}
+	if len(policy.ExposedHeaders) > 0 {
+		header.Set("Access-Control-Expose-Headers", strings.Join(policy.ExposedHeaders, ", "))
+	}
+	if policy.AllowCredentials {
+		header.Set("Access-Control-Allow-Credentials", "true")
+	}
+	if policy.MaxAgeSeconds > 0 {
+		header.Set("Access-Control-Max-Age", strconv.Itoa(policy.MaxAgeSeconds))
+	}
+}
+
+func corsOriginAllowed(policy config.CORSConfig, origin string) bool {
+	return containsFold(policy.AllowedOrigins, "*") || containsFold(policy.AllowedOrigins, origin)
+}
+
+func containsFold(values []string, wanted string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, wanted) {
 			return true
 		}
 	}

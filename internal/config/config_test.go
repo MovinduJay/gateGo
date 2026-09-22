@@ -69,6 +69,13 @@ func TestParseValidatesAccessCIDRs(t *testing.T) {
 	}
 }
 
+func TestParseValidatesCredentialedCORS(t *testing.T) {
+	_, err := Parse([]byte(`{"routes":[{"name":"api","cors":{"enabled":true,"allowed_origins":["*"],"allow_credentials":true},"backends":[{"url":"http://a"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "wildcard origin with credentials") {
+		t.Fatalf("unsafe CORS error = %v", err)
+	}
+}
+
 func TestParseAndSortLongestPrefixFirst(t *testing.T) {
 	raw := []byte(`{
 	  "routes": [
