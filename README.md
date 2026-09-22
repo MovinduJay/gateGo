@@ -56,6 +56,7 @@ On Windows without `make`, run:
 | Retry budgets and backend bulkheads | Prevent one failed replica from amplifying load into healthy replicas | Overload is rejected deliberately instead of queued indefinitely |
 | Atomic JSON reloads | Invalid configuration never replaces the last-known-good route set | This is not a distributed control plane |
 | Prometheus and OpenTelemetry | Metrics explain aggregate behavior while traces explain individual requests | Full observability adds three demo containers |
+| Structured access logs | Every request emits machine-readable status, latency, byte count, request ID, and trace ID for incident correlation | High-volume deployments should sample or aggregate logs |
 | Multi-stage container builds | The compiler stays out of the runtime image, reducing size and attack surface | Builds have an additional stage |
 | Header and body size limits | Reject oversized input before it consumes disproportionate gateway or backend memory | Limits must be raised deliberately for unusual APIs |
 

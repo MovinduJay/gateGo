@@ -65,7 +65,7 @@ func main() {
 	mux.Handle("/", gw)
 	server := &http.Server{
 		Addr:              cfg.Server.Listen,
-		Handler:           observability.NewHTTPHandler(mux),
+		Handler:           observability.AccessLog(observability.NewHTTPHandler(mux), logger),
 		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout.Std(),
 		IdleTimeout:       cfg.Server.IdleTimeout.Std(),
 		MaxHeaderBytes:    cfg.Server.MaxRequestHeaderBytes,
