@@ -137,6 +137,40 @@ func TestAdminConfigReturnsEffectiveConfiguration(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), `"timeout":"3s"`) || !strings.Contains(rr.Body.String(), `"max_concurrent_requests":256`) {
 		t.Fatalf("effective defaults missing from config: %s", rr.Body.String())
 	}
+	etag := rr.Header().Get("ETag")
+	revision := rr.Header().Get("X-GateGo-Config-Revision")
+	if etag == "" || revision == "" || etag != `"`+revision+`"` {
+		t.Fatalf("invalid config revision headers: etag=%q revision=%q", etag, revision)
+	}
+	conditional := httptest.NewRequest(http.MethodGet, "http://gateway/admin/config", nil)
+	conditional.Header.Set("X-Admin-Key", "admin")
+	conditional.Header.Set("If-None-Match", etag)
+	conditionalRR := httptest.NewRecorder()
+	gw.ServeHTTP(conditionalRR, conditional)
+	if conditionalRR.Code != http.StatusNotModified || conditionalRR.Body.Len() != 0 {
+		t.Fatalf("conditional config response = %d body=%q", conditionalRR.Code, conditionalRR.Body.String())
+	}
+}
+
+func TestConfigRevisionIsDeterministicAndChangesWithConfig(t *testing.T) {
+	one, err := config.Parse([]byte(`{"routes":[{"name":"api","backends":[{"url":"http://a"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := config.Parse([]byte(`{"routes":[{"name":"api","backends":[{"url":"http://a"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := config.Parse([]byte(`{"routes":[{"name":"api","timeout":"4s","backends":[{"url":"http://a"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configRevision(one) != configRevision(two) {
+		t.Fatal("equivalent effective configs must have the same revision")
+	}
+	if configRevision(one) == configRevision(changed) {
+		t.Fatal("different effective configs must have different revisions")
+	}
 }
 
 func TestRouteAccessPolicyDenyOverridesAllow(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -41,8 +42,9 @@ type Route struct {
 }
 
 type routeSet struct {
-	Config *config.Config
-	Routes []*Route
+	Config   *config.Config
+	Routes   []*Route
+	Revision string
 }
 
 type Gateway struct {
@@ -101,7 +103,7 @@ func (g *Gateway) recordCircuitState(route string, backend *balancer.Backend) {
 }
 
 func buildRouteSet(cfg *config.Config) (*routeSet, error) {
-	set := &routeSet{Config: cfg}
+	set := &routeSet{Config: cfg, Revision: configRevision(cfg)}
 	for _, rc := range cfg.Routes {
 		lb, err := balancer.New(rc.Backends, rc.Resilience)
 		if err != nil {
@@ -114,6 +116,15 @@ func buildRouteSet(cfg *config.Config) (*routeSet, error) {
 		})
 	}
 	return set, nil
+}
+
+func configRevision(cfg *config.Config) string {
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return "unknown"
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:8])
 }
 
 func (g *Gateway) Reload() error {
@@ -133,7 +144,7 @@ func (g *Gateway) Reload() error {
 	if info, statErr := os.Stat(g.configPath); statErr == nil {
 		g.configModTime = info.ModTime()
 	}
-	g.logger.Info("configuration reloaded", "routes", len(set.Routes))
+	g.logger.Info("configuration reloaded", "routes", len(set.Routes), "revision", set.Revision)
 	return nil
 }
 
@@ -352,7 +363,8 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 		if !g.Ready() {
 			status = http.StatusServiceUnavailable
 		}
-		g.respondJSON(w, status, map[string]any{"ready": status == http.StatusOK, "routes": g.readinessSnapshot()})
+		set := g.routes.Load()
+		g.respondJSON(w, status, map[string]any{"ready": status == http.StatusOK, "config_revision": set.Revision, "routes": g.readinessSnapshot()})
 		return true
 	case "/admin/reload":
 		if r.Method != http.MethodPost {
@@ -406,7 +418,15 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 			g.respondJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 			return true
 		}
-		g.respondJSON(w, http.StatusOK, g.routes.Load().Config)
+		set := g.routes.Load()
+		etag := `"` + set.Revision + `"`
+		w.Header().Set("ETag", etag)
+		w.Header().Set("X-GateGo-Config-Revision", set.Revision)
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return true
+		}
+		g.respondJSON(w, http.StatusOK, set.Config)
 		return true
 	case "/admin/backends":
 		if r.Method != http.MethodGet {
