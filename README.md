@@ -131,6 +131,8 @@ Invoke-WebRequest -Method Post -Headers @{"X-Admin-Key"="dev-admin-key"} "http:/
 Invoke-WebRequest -Method Delete -Headers @{"X-Admin-Key"="dev-admin-key"} "http://localhost:8080/admin/backends/drain?route=public-api&backend=backend-b:9002"
 ```
 
+An entire gateway replica can be withdrawn for deployment with `POST /admin/maintenance`. While enabled, `/readyz` returns `503` and new data-plane requests receive `503` plus `Retry-After`, but `/healthz` and authenticated administration remain available. `GET` reports state and `DELETE` resumes traffic.
+
 ## Verification
 
 ```powershell

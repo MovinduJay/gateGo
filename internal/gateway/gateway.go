@@ -62,6 +62,7 @@ type Gateway struct {
 	configModTime  time.Time
 	redisRetryAt   atomic.Int64
 	redisWarnAt    atomic.Int64
+	maintenance    atomic.Bool
 }
 
 func New(configPath string, cfg *config.Config, jwtSecret, adminKey string, redisLimiter *ratelimit.RedisLimiter, m *metrics.Metrics, logger *slog.Logger) (*Gateway, error) {
@@ -221,6 +222,9 @@ func (g *Gateway) healthTargets() []health.Target {
 }
 
 func (g *Gateway) Ready() bool {
+	if g.maintenance.Load() {
+		return false
+	}
 	for _, route := range g.readinessSnapshot() {
 		if !route.Ready {
 			return false
@@ -277,6 +281,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	traceparent, traceID := observability.RequestTrace(r.Context(), r.Header.Get("traceparent"))
 	r.Header.Set("traceparent", traceparent)
 	w.Header().Set("X-Trace-ID", traceID)
+	if g.maintenance.Load() {
+		w.Header().Set("Retry-After", "1")
+		g.respondJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "gateway is in maintenance mode", "request_id": requestID})
+		return
+	}
 
 	route := g.match(r.URL.Path)
 	if route == nil {
@@ -365,6 +374,25 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 		}
 		set := g.routes.Load()
 		g.respondJSON(w, status, map[string]any{"ready": status == http.StatusOK, "config_revision": set.Revision, "routes": g.readinessSnapshot()})
+		return true
+	case "/admin/maintenance":
+		if r.Method != http.MethodGet && r.Method != http.MethodPost && r.Method != http.MethodDelete {
+			w.Header().Set("Allow", "GET, POST, DELETE")
+			g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "GET, POST, or DELETE required"})
+			return true
+		}
+		if g.adminKey == "" || r.Header.Get("X-Admin-Key") != g.adminKey {
+			g.respondJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return true
+		}
+		if r.Method == http.MethodPost {
+			g.maintenance.Store(true)
+			g.logger.Warn("maintenance mode enabled", "peer", r.RemoteAddr)
+		} else if r.Method == http.MethodDelete {
+			g.maintenance.Store(false)
+			g.logger.Info("maintenance mode disabled", "peer", r.RemoteAddr)
+		}
+		g.respondJSON(w, http.StatusOK, map[string]any{"maintenance": g.maintenance.Load()})
 		return true
 	case "/admin/reload":
 		if r.Method != http.MethodPost {

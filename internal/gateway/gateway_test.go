@@ -173,6 +173,54 @@ func TestConfigRevisionIsDeterministicAndChangesWithConfig(t *testing.T) {
 	}
 }
 
+func TestMaintenanceModeWithdrawsReadinessAndRejectsTraffic(t *testing.T) {
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		backendCalls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	cfg, err := config.Parse([]byte(`{"routes":[{"name":"api","path_prefix":"/api","backends":[{"url":"` + backend.URL + `"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := func(method string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "http://gateway/admin/maintenance", nil)
+		req.Header.Set("X-Admin-Key", "admin")
+		rr := httptest.NewRecorder()
+		gw.ServeHTTP(rr, req)
+		return rr
+	}
+	if rr := admin(http.MethodPost); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"maintenance":true`) {
+		t.Fatalf("enable maintenance = %d %s", rr.Code, rr.Body.String())
+	}
+	if gw.Ready() {
+		t.Fatal("maintenance gateway must not be ready")
+	}
+	traffic := httptest.NewRecorder()
+	gw.ServeHTTP(traffic, httptest.NewRequest(http.MethodGet, "http://gateway/api/test", nil))
+	if traffic.Code != http.StatusServiceUnavailable || traffic.Header().Get("Retry-After") != "1" || backendCalls != 0 {
+		t.Fatalf("maintenance traffic = %d retry-after=%q backend-calls=%d", traffic.Code, traffic.Header().Get("Retry-After"), backendCalls)
+	}
+	health := httptest.NewRecorder()
+	gw.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "http://gateway/healthz", nil))
+	if health.Code != http.StatusOK {
+		t.Fatalf("health during maintenance = %d", health.Code)
+	}
+	if rr := admin(http.MethodDelete); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"maintenance":false`) {
+		t.Fatalf("disable maintenance = %d %s", rr.Code, rr.Body.String())
+	}
+	traffic = httptest.NewRecorder()
+	gw.ServeHTTP(traffic, httptest.NewRequest(http.MethodGet, "http://gateway/api/test", nil))
+	if traffic.Code != http.StatusOK || backendCalls != 1 {
+		t.Fatalf("restored traffic = %d backend-calls=%d", traffic.Code, backendCalls)
+	}
+}
+
 func TestRouteAccessPolicyDenyOverridesAllow(t *testing.T) {
 	called := false
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
