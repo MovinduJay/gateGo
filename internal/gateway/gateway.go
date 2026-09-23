@@ -643,7 +643,7 @@ attempts:
 		}
 		backendName := backend.URL.Host
 		ctx, cancel := context.WithTimeout(r.Context(), route.Config.Timeout.Std())
-		upstreamReq, reqErr := buildUpstreamRequest(ctx, r, backend.URL.String(), body)
+		upstreamReq, reqErr := buildUpstreamRequest(ctx, r, backend.URL.String(), body, route.Config.PathPrefix, route.Config.StripPathPrefix)
 		if reqErr != nil {
 			backend.Release()
 			if retryAdmitted {
@@ -744,6 +744,10 @@ func (g *Gateway) serveWebSocket(w http.ResponseWriter, r *http.Request, route *
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
 		req.Host = backend.URL.Host
+		if route.Config.StripPathPrefix {
+			req.URL.Path = stripPathPrefix(req.URL.Path, route.Config.PathPrefix)
+			req.URL.RawPath = ""
+		}
 		req.Header.Set("X-GateGo-Proxy", "1")
 		applyRequestHeaderPolicy(req.Header, route.Config.Headers)
 	}
@@ -787,8 +791,15 @@ func readBody(r *http.Request, max int64) ([]byte, error) {
 	return b, nil
 }
 
-func buildUpstreamRequest(ctx context.Context, original *http.Request, base string, body []byte) (*http.Request, error) {
-	target := strings.TrimRight(base, "/") + original.URL.RequestURI()
+func buildUpstreamRequest(ctx context.Context, original *http.Request, base string, body []byte, routePrefix string, stripPrefix bool) (*http.Request, error) {
+	path := original.URL.EscapedPath()
+	if stripPrefix {
+		path = stripPathPrefix(original.URL.Path, routePrefix)
+	}
+	target := strings.TrimRight(base, "/") + path
+	if original.URL.RawQuery != "" {
+		target += "?" + original.URL.RawQuery
+	}
 	req, err := http.NewRequestWithContext(ctx, original.Method, target, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -806,6 +817,18 @@ func buildUpstreamRequest(ctx context.Context, original *http.Request, base stri
 	}
 	req.Header.Set("X-GateGo-Proxy", "1")
 	return req, nil
+}
+
+func stripPathPrefix(path, prefix string) string {
+	prefix = strings.TrimSuffix(prefix, "/")
+	stripped := strings.TrimPrefix(path, prefix)
+	if stripped == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(stripped, "/") {
+		return "/" + stripped
+	}
+	return stripped
 }
 
 func applyRequestHeaderPolicy(header http.Header, policy config.HeaderConfig) {

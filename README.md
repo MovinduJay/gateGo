@@ -68,6 +68,8 @@ Browser-facing routes can define a `cors` policy with allowed origins, methods, 
 
 Per-route `headers` policies can set or remove request and response headers at the proxy boundary. GateGo rejects transformations of hop-by-hop headers and trusted identity headers so routing configuration cannot bypass authentication or transport rules.
 
+Routes may set `strip_path_prefix` when the external API namespace should not be forwarded upstream. Query strings are preserved, and the same rewrite is applied to normal HTTP and WebSocket requests.
+
 ## Run locally
 
 Start three demo backends, then GateGo with the local configuration:

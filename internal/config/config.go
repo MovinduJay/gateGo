@@ -64,6 +64,7 @@ type ObservabilityConfig struct {
 type RouteConfig struct {
 	Name                string           `json:"name"`
 	PathPrefix          string           `json:"path_prefix"`
+	StripPathPrefix     bool             `json:"strip_path_prefix"`
 	Methods             []string         `json:"methods"`
 	AuthRequired        bool             `json:"auth_required"`
 	RateLimit           RateLimitConfig  `json:"rate_limit"`

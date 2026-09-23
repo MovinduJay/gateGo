@@ -330,6 +330,35 @@ func TestRouteHeaderTransformsApplyAtProxyBoundary(t *testing.T) {
 	}
 }
 
+func TestRouteCanStripPrefixAndPreserveQuery(t *testing.T) {
+	var received string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received = r.URL.RequestURI()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	raw := `{"routes":[{"name":"payments","path_prefix":"/payments","strip_path_prefix":true,"backends":[{"url":"` + backend.URL + `"}]}]}`
+	cfg, err := config.Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://gateway/payments/orders/42?expand=items", nil))
+	if rr.Code != http.StatusOK || received != "/orders/42?expand=items" {
+		t.Fatalf("proxy response=%d upstream URI=%q", rr.Code, received)
+	}
+	rr = httptest.NewRecorder()
+	gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://gateway/payments", nil))
+	if rr.Code != http.StatusOK || received != "/" {
+		t.Fatalf("prefix-root response=%d upstream URI=%q", rr.Code, received)
+	}
+}
+
 func TestBackendDrainStopsNewTrafficAndPreservesInflight(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
