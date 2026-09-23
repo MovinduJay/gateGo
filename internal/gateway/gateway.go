@@ -308,7 +308,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	select {
 	case route.requestSlots <- struct{}{}:
-		defer func() { <-route.requestSlots }()
+		g.metrics.AddInflight(route.Config.Name, 1)
+		defer func() {
+			<-route.requestSlots
+			g.metrics.AddInflight(route.Config.Name, -1)
+		}()
 	default:
 		g.metrics.IncLoadShed(route.Config.Name)
 		g.record(route.Config.Name, "", http.StatusServiceUnavailable, started)
@@ -620,10 +624,19 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request, route *Route
 attempts:
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		retryAdmitted := false
+		releaseRetry := func() {}
 		if attempt > 0 {
 			select {
 			case route.retrySlots <- struct{}{}:
 				retryAdmitted = true
+				g.metrics.AddRetryInflight(route.Config.Name, 1)
+				releaseRetry = func() {
+					if retryAdmitted {
+						<-route.retrySlots
+						g.metrics.AddRetryInflight(route.Config.Name, -1)
+						retryAdmitted = false
+					}
+				}
 			default:
 				lastErr = fmt.Errorf("retry budget exhausted")
 				g.metrics.IncRetryRejected(route.Config.Name)
@@ -632,9 +645,7 @@ attempts:
 		}
 		backend, pickErr := route.Balancer.Pick()
 		if pickErr != nil {
-			if retryAdmitted {
-				<-route.retrySlots
-			}
+			releaseRetry()
 			lastErr = pickErr
 			if errors.Is(pickErr, balancer.ErrAllBackendsBusy) {
 				g.metrics.IncBulkheadRejected(route.Config.Name)
@@ -646,9 +657,7 @@ attempts:
 		upstreamReq, reqErr := buildUpstreamRequest(ctx, r, backend.URL.String(), body, route.Config.PathPrefix, route.Config.StripPathPrefix)
 		if reqErr != nil {
 			backend.Release()
-			if retryAdmitted {
-				<-route.retrySlots
-			}
+			releaseRetry()
 			cancel()
 			lastErr = reqErr
 			break
@@ -657,9 +666,7 @@ attempts:
 		resp, reqErr := g.client.Do(upstreamReq)
 		if reqErr != nil {
 			backend.Release()
-			if retryAdmitted {
-				<-route.retrySlots
-			}
+			releaseRetry()
 			cancel()
 			if r.Context().Err() != nil {
 				g.metrics.IncClientCanceled(route.Config.Name, backendName)
@@ -684,9 +691,7 @@ attempts:
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 			resp.Body.Close()
 			backend.Release()
-			if retryAdmitted {
-				<-route.retrySlots
-			}
+			releaseRetry()
 			cancel()
 			if backend.Breaker.Failure() {
 				g.recordCircuitState(route.Config.Name, backend)
@@ -718,9 +723,7 @@ attempts:
 		_, _ = io.Copy(w, resp.Body)
 		resp.Body.Close()
 		backend.Release()
-		if retryAdmitted {
-			<-route.retrySlots
-		}
+		releaseRetry()
 		cancel()
 		g.record(route.Config.Name, backendName, resp.StatusCode, started)
 		return

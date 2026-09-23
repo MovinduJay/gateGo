@@ -98,6 +98,8 @@ docker compose logs -f otel-collector
 
 Prometheus is exposed on port 9090 and Grafana on port 3000. Outside Compose, set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable trace export; W3C trace-context propagation remains active when export is disabled.
 
+The containment dashboard includes live `gatego_inflight_requests` and `gatego_inflight_retries` gauges alongside retry, rejection, circuit, and load-shedding counters. This makes concurrency saturation visible during failure tests rather than only after requests are rejected.
+
 `GET /version` returns the running binary's version, commit, build timestamp, dirty-tree flag, and Go runtime version. Container builds accept `VERSION`, `COMMIT`, and `BUILD_DATE` build arguments, allowing deployments and incident reports to identify an exact artifact.
 
 ## Configuration and service discovery

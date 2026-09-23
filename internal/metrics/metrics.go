@@ -20,6 +20,7 @@ type Metrics struct {
 	retryRejected, bulkheadRejected                map[string]uint64
 	loadShed                                       map[string]uint64
 	clientCanceled                                 map[string]uint64
+	inflight, retryInflight                        map[string]int64
 	healthy, circuit, draining                     map[string]float64
 	durations                                      map[string]*hist
 }
@@ -27,7 +28,7 @@ type Metrics struct {
 var bounds = []float64{.005, .01, .025, .05, .1, .25, .5, 1}
 
 func New() *Metrics {
-	return &Metrics{requests: map[string]uint64{}, upstreamErrors: map[string]uint64{}, rateLimited: map[string]uint64{}, retries: map[string]uint64{}, retryRejected: map[string]uint64{}, bulkheadRejected: map[string]uint64{}, loadShed: map[string]uint64{}, clientCanceled: map[string]uint64{}, healthy: map[string]float64{}, circuit: map[string]float64{}, draining: map[string]float64{}, durations: map[string]*hist{}}
+	return &Metrics{requests: map[string]uint64{}, upstreamErrors: map[string]uint64{}, rateLimited: map[string]uint64{}, retries: map[string]uint64{}, retryRejected: map[string]uint64{}, bulkheadRejected: map[string]uint64{}, loadShed: map[string]uint64{}, clientCanceled: map[string]uint64{}, inflight: map[string]int64{}, retryInflight: map[string]int64{}, healthy: map[string]float64{}, circuit: map[string]float64{}, draining: map[string]float64{}, durations: map[string]*hist{}}
 }
 func key(parts ...string) string { return strings.Join(parts, "\x1f") }
 func (m *Metrics) IncRequest(route, status string) {
@@ -60,6 +61,16 @@ func (m *Metrics) IncLoadShed(route string) {
 func (m *Metrics) IncClientCanceled(route, backend string) {
 	m.mu.Lock()
 	m.clientCanceled[key(route, backend)]++
+	m.mu.Unlock()
+}
+func (m *Metrics) AddInflight(route string, delta int64) {
+	m.mu.Lock()
+	m.inflight[route] += delta
+	m.mu.Unlock()
+}
+func (m *Metrics) AddRetryInflight(route string, delta int64) {
+	m.mu.Lock()
+	m.retryInflight[route] += delta
 	m.mu.Unlock()
 }
 func (m *Metrics) SetHealthy(route, backend string, v float64) {
@@ -133,6 +144,8 @@ func (m *Metrics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeMap(w, "gatego_bulkhead_rejected_total", m.bulkheadRejected, []string{"route"})
 	writeMap(w, "gatego_load_shed_total", m.loadShed, []string{"route"})
 	writeMap(w, "gatego_client_canceled_total", m.clientCanceled, []string{"route", "backend"})
+	writeIntMap(w, "gatego_inflight_requests", m.inflight, []string{"route"})
+	writeIntMap(w, "gatego_inflight_retries", m.retryInflight, []string{"route"})
 	keys := sortedFloat(m.healthy)
 	for _, k := range keys {
 		fmt.Fprintf(w, "gatego_backend_healthy{%s} %g\n", labels(k, "route", "backend"), m.healthy[k])
@@ -152,6 +165,16 @@ func (m *Metrics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "gatego_request_duration_seconds_bucket{%s,le=\"+Inf\"} %d\n", base, h.Count)
 		fmt.Fprintf(w, "gatego_request_duration_seconds_sum{%s} %g\n", base, h.Sum)
 		fmt.Fprintf(w, "gatego_request_duration_seconds_count{%s} %d\n", base, h.Count)
+	}
+}
+func writeIntMap(w http.ResponseWriter, name string, m map[string]int64, names []string) {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	for _, k := range ks {
+		fmt.Fprintf(w, "%s{%s} %d\n", name, labels(k, names...), m[k])
 	}
 }
 func writeMap(w http.ResponseWriter, name string, m map[string]uint64, names []string) {
