@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/example/gatego/internal/buildinfo"
 	"github.com/example/gatego/internal/config"
 	"github.com/example/gatego/internal/gateway"
 	gmetrics "github.com/example/gatego/internal/metrics"
@@ -62,6 +63,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", m)
+	mux.Handle("/version", buildinfo.Handler())
 	mux.Handle("/", gw)
 	server := &http.Server{
 		Addr:              cfg.Server.Listen,

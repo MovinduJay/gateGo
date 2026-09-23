@@ -98,6 +98,8 @@ docker compose logs -f otel-collector
 
 Prometheus is exposed on port 9090 and Grafana on port 3000. Outside Compose, set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable trace export; W3C trace-context propagation remains active when export is disabled.
 
+`GET /version` returns the running binary's version, commit, build timestamp, dirty-tree flag, and Go runtime version. Container builds accept `VERSION`, `COMMIT`, and `BUILD_DATE` build arguments, allowing deployments and incident reports to identify an exact artifact.
+
 ## Configuration and service discovery
 
 Backends are addressed by DNS names in `configs/gatego.json`; Docker, Kubernetes, or another service registry supplies the current endpoint behind each name. GateGo also polls its mounted configuration file every `server.config_reload_interval` and atomically activates valid changes. A malformed update leaves the last known-good routes active.
