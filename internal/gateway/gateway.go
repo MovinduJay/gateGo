@@ -86,6 +86,7 @@ func New(configPath string, cfg *config.Config, jwtSecret, adminKey string, redi
 		return nil, err
 	}
 	g.routes.Store(set)
+	g.metrics.SetConfigRevision(set.Revision)
 	g.initializeCircuitMetrics(set)
 	return g, nil
 }
@@ -133,14 +134,18 @@ func (g *Gateway) Reload() error {
 	defer g.reloadMu.Unlock()
 	cfg, err := config.Load(g.configPath)
 	if err != nil {
+		g.metrics.IncConfigReload("failure")
 		return err
 	}
 	set, err := buildRouteSet(cfg)
 	if err != nil {
+		g.metrics.IncConfigReload("failure")
 		return err
 	}
 	preserveDrainState(g.routes.Load(), set)
 	g.routes.Store(set)
+	g.metrics.SetConfigRevision(set.Revision)
+	g.metrics.IncConfigReload("success")
 	g.initializeCircuitMetrics(set)
 	if info, statErr := os.Stat(g.configPath); statErr == nil {
 		g.configModTime = info.ModTime()

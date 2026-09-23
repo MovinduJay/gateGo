@@ -100,6 +100,8 @@ Prometheus is exposed on port 9090 and Grafana on port 3000. Outside Compose, se
 
 The containment dashboard includes live `gatego_inflight_requests` and `gatego_inflight_retries` gauges alongside retry, rejection, circuit, and load-shedding counters. This makes concurrency saturation visible during failure tests rather than only after requests are rejected.
 
+Configuration operations expose `gatego_config_reloads_total{result="success|failure"}` and `gatego_config_info{revision="..."}`. These support alerts for rejected reloads and Prometheus queries that detect revision drift across replicas.
+
 `GET /version` returns the running binary's version, commit, build timestamp, dirty-tree flag, and Go runtime version. Container builds accept `VERSION`, `COMMIT`, and `BUILD_DATE` build arguments, allowing deployments and incident reports to identify an exact artifact.
 
 ## Configuration and service discovery

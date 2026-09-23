@@ -8,7 +8,8 @@
     {"type":"timeseries","title":"Retries and containment","gridPos":{"h":8,"w":8,"x":8,"y":8},"targets":[{"expr":"sum(rate(gatego_retries_total[1m])) by (route)","legendFormat":"retry {{route}}"},{"expr":"sum(rate(gatego_retry_rejected_total[1m])) by (route)","legendFormat":"budget {{route}}"},{"expr":"sum(rate(gatego_bulkhead_rejected_total[1m])) by (route)","legendFormat":"bulkhead {{route}}"},{"expr":"sum(rate(gatego_load_shed_total[1m])) by (route)","legendFormat":"shed {{route}}"},{"expr":"sum(rate(gatego_client_canceled_total[1m])) by (route)","legendFormat":"canceled {{route}}"},{"expr":"sum(gatego_inflight_requests) by (route)","legendFormat":"inflight {{route}}"},{"expr":"sum(gatego_inflight_retries) by (route)","legendFormat":"retry inflight {{route}}"}]},
     {"type":"timeseries","title":"Upstream errors","gridPos":{"h":8,"w":8,"x":16,"y":8},"targets":[{"expr":"sum(rate(gatego_upstream_errors_total[1m])) by (route, backend)","legendFormat":"{{route}} / {{backend}}"}]},
     {"type":"state-timeline","title":"Circuit states","gridPos":{"h":8,"w":16,"x":0,"y":16},"targets":[{"expr":"gatego_backend_circuit_state == 1","legendFormat":"{{route}} / {{backend}} / {{state}}"}]},
-    {"type":"stat","title":"Draining backends","gridPos":{"h":8,"w":8,"x":16,"y":16},"targets":[{"expr":"gatego_backend_draining","legendFormat":"{{route}} / {{backend}}"}]}
+    {"type":"stat","title":"Draining backends","gridPos":{"h":8,"w":8,"x":16,"y":16},"targets":[{"expr":"gatego_backend_draining","legendFormat":"{{route}} / {{backend}}"}]},
+    {"type":"stat","title":"Configuration control plane","gridPos":{"h":8,"w":24,"x":0,"y":24},"targets":[{"expr":"count(count by (revision) (gatego_config_info))","legendFormat":"distinct revisions"},{"expr":"sum(rate(gatego_config_reloads_total{result=\"failure\"}[5m]))","legendFormat":"failed reloads / sec"}]}
   ],
   "schemaVersion": 39,
   "tags": ["gatego", "gateway"],

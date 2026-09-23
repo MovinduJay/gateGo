@@ -16,6 +16,9 @@ func TestContainmentMetricsAreExposed(t *testing.T) {
 	m.IncClientCanceled("api", "backend-b")
 	m.AddInflight("api", 2)
 	m.AddRetryInflight("api", 1)
+	m.IncConfigReload("success")
+	m.IncConfigReload("failure")
+	m.SetConfigRevision("abc123")
 	rr := httptest.NewRecorder()
 	m.ServeHTTP(rr, httptest.NewRequest("GET", "/metrics", nil))
 	body := rr.Body.String()
@@ -28,6 +31,9 @@ func TestContainmentMetricsAreExposed(t *testing.T) {
 		`gatego_client_canceled_total{route="api",backend="backend-b"} 1`,
 		`gatego_inflight_requests{route="api"} 2`,
 		`gatego_inflight_retries{route="api"} 1`,
+		`gatego_config_reloads_total{result="success"} 1`,
+		`gatego_config_reloads_total{result="failure"} 1`,
+		`gatego_config_info{revision="abc123"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metric %q missing from:\n%s", want, body)

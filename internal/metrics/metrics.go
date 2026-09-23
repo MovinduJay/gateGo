@@ -20,15 +20,17 @@ type Metrics struct {
 	retryRejected, bulkheadRejected                map[string]uint64
 	loadShed                                       map[string]uint64
 	clientCanceled                                 map[string]uint64
+	configReloads                                  map[string]uint64
 	inflight, retryInflight                        map[string]int64
 	healthy, circuit, draining                     map[string]float64
+	configRevision                                 string
 	durations                                      map[string]*hist
 }
 
 var bounds = []float64{.005, .01, .025, .05, .1, .25, .5, 1}
 
 func New() *Metrics {
-	return &Metrics{requests: map[string]uint64{}, upstreamErrors: map[string]uint64{}, rateLimited: map[string]uint64{}, retries: map[string]uint64{}, retryRejected: map[string]uint64{}, bulkheadRejected: map[string]uint64{}, loadShed: map[string]uint64{}, clientCanceled: map[string]uint64{}, inflight: map[string]int64{}, retryInflight: map[string]int64{}, healthy: map[string]float64{}, circuit: map[string]float64{}, draining: map[string]float64{}, durations: map[string]*hist{}}
+	return &Metrics{requests: map[string]uint64{}, upstreamErrors: map[string]uint64{}, rateLimited: map[string]uint64{}, retries: map[string]uint64{}, retryRejected: map[string]uint64{}, bulkheadRejected: map[string]uint64{}, loadShed: map[string]uint64{}, clientCanceled: map[string]uint64{}, configReloads: map[string]uint64{}, inflight: map[string]int64{}, retryInflight: map[string]int64{}, healthy: map[string]float64{}, circuit: map[string]float64{}, draining: map[string]float64{}, durations: map[string]*hist{}}
 }
 func key(parts ...string) string { return strings.Join(parts, "\x1f") }
 func (m *Metrics) IncRequest(route, status string) {
@@ -71,6 +73,16 @@ func (m *Metrics) AddInflight(route string, delta int64) {
 func (m *Metrics) AddRetryInflight(route string, delta int64) {
 	m.mu.Lock()
 	m.retryInflight[route] += delta
+	m.mu.Unlock()
+}
+func (m *Metrics) IncConfigReload(result string) {
+	m.mu.Lock()
+	m.configReloads[result]++
+	m.mu.Unlock()
+}
+func (m *Metrics) SetConfigRevision(revision string) {
+	m.mu.Lock()
+	m.configRevision = revision
 	m.mu.Unlock()
 }
 func (m *Metrics) SetHealthy(route, backend string, v float64) {
@@ -146,6 +158,10 @@ func (m *Metrics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeMap(w, "gatego_client_canceled_total", m.clientCanceled, []string{"route", "backend"})
 	writeIntMap(w, "gatego_inflight_requests", m.inflight, []string{"route"})
 	writeIntMap(w, "gatego_inflight_retries", m.retryInflight, []string{"route"})
+	writeMap(w, "gatego_config_reloads_total", m.configReloads, []string{"result"})
+	if m.configRevision != "" {
+		fmt.Fprintf(w, "gatego_config_info{revision=\"%s\"} 1\n", esc(m.configRevision))
+	}
 	keys := sortedFloat(m.healthy)
 	for _, k := range keys {
 		fmt.Fprintf(w, "gatego_backend_healthy{%s} %g\n", labels(k, "route", "backend"), m.healthy[k])
