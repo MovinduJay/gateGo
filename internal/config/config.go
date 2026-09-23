@@ -73,6 +73,7 @@ type RouteConfig struct {
 	MaxRequestBodyBytes int64            `json:"max_request_body_bytes"`
 	Access              AccessConfig     `json:"access"`
 	CORS                CORSConfig       `json:"cors"`
+	Headers             HeaderConfig     `json:"headers"`
 	Backends            []BackendConfig  `json:"backends"`
 }
 
@@ -89,6 +90,13 @@ type CORSConfig struct {
 	ExposedHeaders   []string `json:"exposed_headers"`
 	AllowCredentials bool     `json:"allow_credentials"`
 	MaxAgeSeconds    int      `json:"max_age_seconds"`
+}
+
+type HeaderConfig struct {
+	RequestSet     map[string]string `json:"request_set"`
+	RequestRemove  []string          `json:"request_remove"`
+	ResponseSet    map[string]string `json:"response_set"`
+	ResponseRemove []string          `json:"response_remove"`
 }
 
 type ResilienceConfig struct {
@@ -285,6 +293,11 @@ func validate(cfg *Config) error {
 				return fmt.Errorf("route %q CORS max_age_seconds cannot be negative", r.Name)
 			}
 		}
+		for _, header := range headerPolicyNames(r.Headers) {
+			if isReservedHeader(header) {
+				return fmt.Errorf("route %q header policy cannot modify reserved header %q", r.Name, header)
+			}
+		}
 		if r.Resilience.CircuitFailureThreshold < 1 || r.Resilience.CircuitCooldown.Std() <= 0 || r.Resilience.MaxConcurrentPerBackend < 1 || r.Resilience.MaxConcurrentRetries < 1 || r.Resilience.MaxConcurrentRequests < 1 {
 			return fmt.Errorf("route %q resilience values must be positive", r.Name)
 		}
@@ -301,6 +314,27 @@ func validate(cfg *Config) error {
 		}
 	}
 	return nil
+}
+
+func headerPolicyNames(policy HeaderConfig) []string {
+	result := append([]string{}, policy.RequestRemove...)
+	result = append(result, policy.ResponseRemove...)
+	for name := range policy.RequestSet {
+		result = append(result, name)
+	}
+	for name := range policy.ResponseSet {
+		result = append(result, name)
+	}
+	return result
+}
+
+func isReservedHeader(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", "connection", "proxy-connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "x-authenticated-subject", "x-authenticated-role", "x-gatego-proxy":
+		return true
+	default:
+		return false
+	}
 }
 func MethodAllowed(route RouteConfig, method string) bool {
 	if len(route.Methods) == 0 {

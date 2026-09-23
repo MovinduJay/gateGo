@@ -76,6 +76,13 @@ func TestParseValidatesCredentialedCORS(t *testing.T) {
 	}
 }
 
+func TestParseRejectsReservedHeaderTransforms(t *testing.T) {
+	_, err := Parse([]byte(`{"routes":[{"name":"api","headers":{"request_set":{"X-Authenticated-Subject":"admin"}},"backends":[{"url":"http://a"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "reserved header") {
+		t.Fatalf("reserved header error = %v", err)
+	}
+}
+
 func TestParseAndSortLongestPrefixFirst(t *testing.T) {
 	raw := []byte(`{
 	  "routes": [

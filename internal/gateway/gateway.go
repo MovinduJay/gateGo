@@ -653,6 +653,7 @@ attempts:
 			lastErr = reqErr
 			break
 		}
+		applyRequestHeaderPolicy(upstreamReq.Header, route.Config.Headers)
 		resp, reqErr := g.client.Do(upstreamReq)
 		if reqErr != nil {
 			backend.Release()
@@ -710,6 +711,7 @@ attempts:
 		}
 		copyHeaders(w.Header(), resp.Header)
 		removeHopHeaders(w.Header())
+		applyResponseHeaderPolicy(w.Header(), route.Config.Headers)
 		applyCORSHeaders(w.Header(), route.Config.CORS, r.Header.Get("Origin"))
 		w.Header().Set("X-GateGo-Backend", backendName)
 		w.WriteHeader(resp.StatusCode)
@@ -743,8 +745,10 @@ func (g *Gateway) serveWebSocket(w http.ResponseWriter, r *http.Request, route *
 		originalDirector(req)
 		req.Host = backend.URL.Host
 		req.Header.Set("X-GateGo-Proxy", "1")
+		applyRequestHeaderPolicy(req.Header, route.Config.Headers)
 	}
 	proxy.ModifyResponse = func(resp *http.Response) error {
+		applyResponseHeaderPolicy(resp.Header, route.Config.Headers)
 		if backend.Breaker.Success() {
 			g.recordCircuitState(route.Config.Name, backend)
 		}
@@ -802,6 +806,24 @@ func buildUpstreamRequest(ctx context.Context, original *http.Request, base stri
 	}
 	req.Header.Set("X-GateGo-Proxy", "1")
 	return req, nil
+}
+
+func applyRequestHeaderPolicy(header http.Header, policy config.HeaderConfig) {
+	for _, name := range policy.RequestRemove {
+		header.Del(name)
+	}
+	for name, value := range policy.RequestSet {
+		header.Set(name, value)
+	}
+}
+
+func applyResponseHeaderPolicy(header http.Header, policy config.HeaderConfig) {
+	for _, name := range policy.ResponseRemove {
+		header.Del(name)
+	}
+	for name, value := range policy.ResponseSet {
+		header.Set(name, value)
+	}
 }
 
 func retrySafe(r *http.Request) bool {

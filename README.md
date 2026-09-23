@@ -66,6 +66,8 @@ Routes may also define `access.allow_cidrs` and `access.deny_cidrs`. Deny rules 
 
 Browser-facing routes can define a `cors` policy with allowed origins, methods, headers, exposed headers, credential handling, and preflight cache duration. Unsafe wildcard-origin plus credential configurations are rejected before activation.
 
+Per-route `headers` policies can set or remove request and response headers at the proxy boundary. GateGo rejects transformations of hop-by-hop headers and trusted identity headers so routing configuration cannot bypass authentication or transport rules.
+
 ## Run locally
 
 Start three demo backends, then GateGo with the local configuration:

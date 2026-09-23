@@ -301,6 +301,35 @@ func TestRouteCORSPreflightAndResponsePolicy(t *testing.T) {
 	}
 }
 
+func TestRouteHeaderTransformsApplyAtProxyBoundary(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Remove-Me") != "" || r.Header.Get("X-Environment") != "production" {
+			http.Error(w, "request transform missing", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("X-Upstream-Private", "secret")
+		w.Header().Set("X-Service", "backend")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	raw := `{"routes":[{"name":"api","path_prefix":"/api","headers":{"request_set":{"X-Environment":"production"},"request_remove":["X-Remove-Me"],"response_set":{"X-Service":"gateway"},"response_remove":["X-Upstream-Private"]},"backends":[{"url":"` + backend.URL + `"}]}]}`
+	cfg, err := config.Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/api/test", nil)
+	req.Header.Set("X-Remove-Me", "client-value")
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || rr.Header().Get("X-Service") != "gateway" || rr.Header().Get("X-Upstream-Private") != "" {
+		t.Fatalf("transformed response = %d headers=%v body=%s", rr.Code, rr.Header(), rr.Body.String())
+	}
+}
+
 func TestBackendDrainStopsNewTrafficAndPreservesInflight(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
