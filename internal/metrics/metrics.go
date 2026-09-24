@@ -21,6 +21,7 @@ type Metrics struct {
 	loadShed                                       map[string]uint64
 	clientCanceled                                 map[string]uint64
 	configReloads                                  map[string]uint64
+	shadowRequests                                 map[string]uint64
 	inflight, retryInflight                        map[string]int64
 	healthy, circuit, draining                     map[string]float64
 	configRevision                                 string
@@ -30,7 +31,7 @@ type Metrics struct {
 var bounds = []float64{.005, .01, .025, .05, .1, .25, .5, 1}
 
 func New() *Metrics {
-	return &Metrics{requests: map[string]uint64{}, upstreamErrors: map[string]uint64{}, rateLimited: map[string]uint64{}, retries: map[string]uint64{}, retryRejected: map[string]uint64{}, bulkheadRejected: map[string]uint64{}, loadShed: map[string]uint64{}, clientCanceled: map[string]uint64{}, configReloads: map[string]uint64{}, inflight: map[string]int64{}, retryInflight: map[string]int64{}, healthy: map[string]float64{}, circuit: map[string]float64{}, draining: map[string]float64{}, durations: map[string]*hist{}}
+	return &Metrics{requests: map[string]uint64{}, upstreamErrors: map[string]uint64{}, rateLimited: map[string]uint64{}, retries: map[string]uint64{}, retryRejected: map[string]uint64{}, bulkheadRejected: map[string]uint64{}, loadShed: map[string]uint64{}, clientCanceled: map[string]uint64{}, configReloads: map[string]uint64{}, shadowRequests: map[string]uint64{}, inflight: map[string]int64{}, retryInflight: map[string]int64{}, healthy: map[string]float64{}, circuit: map[string]float64{}, draining: map[string]float64{}, durations: map[string]*hist{}}
 }
 func key(parts ...string) string { return strings.Join(parts, "\x1f") }
 func (m *Metrics) IncRequest(route, status string) {
@@ -83,6 +84,11 @@ func (m *Metrics) IncConfigReload(result string) {
 func (m *Metrics) SetConfigRevision(revision string) {
 	m.mu.Lock()
 	m.configRevision = revision
+	m.mu.Unlock()
+}
+func (m *Metrics) IncShadowRequest(route, result string) {
+	m.mu.Lock()
+	m.shadowRequests[key(route, result)]++
 	m.mu.Unlock()
 }
 func (m *Metrics) SetHealthy(route, backend string, v float64) {
@@ -159,6 +165,7 @@ func (m *Metrics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeIntMap(w, "gatego_inflight_requests", m.inflight, []string{"route"})
 	writeIntMap(w, "gatego_inflight_retries", m.retryInflight, []string{"route"})
 	writeMap(w, "gatego_config_reloads_total", m.configReloads, []string{"result"})
+	writeMap(w, "gatego_shadow_requests_total", m.shadowRequests, []string{"route", "result"})
 	if m.configRevision != "" {
 		fmt.Fprintf(w, "gatego_config_info{revision=\"%s\"} 1\n", esc(m.configRevision))
 	}

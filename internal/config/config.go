@@ -75,6 +75,7 @@ type RouteConfig struct {
 	Access              AccessConfig     `json:"access"`
 	CORS                CORSConfig       `json:"cors"`
 	Headers             HeaderConfig     `json:"headers"`
+	Shadow              ShadowConfig     `json:"shadow"`
 	Backends            []BackendConfig  `json:"backends"`
 }
 
@@ -98,6 +99,13 @@ type HeaderConfig struct {
 	RequestRemove  []string          `json:"request_remove"`
 	ResponseSet    map[string]string `json:"response_set"`
 	ResponseRemove []string          `json:"response_remove"`
+}
+
+type ShadowConfig struct {
+	URL           string   `json:"url"`
+	SamplePercent float64  `json:"sample_percent"`
+	Timeout       Duration `json:"timeout"`
+	MaxConcurrent int      `json:"max_concurrent"`
 }
 
 type ResilienceConfig struct {
@@ -219,6 +227,17 @@ func applyDefaults(cfg *Config) {
 		if r.Resilience.MaxConcurrentRequests == 0 {
 			r.Resilience.MaxConcurrentRequests = 256
 		}
+		if r.Shadow.URL != "" {
+			if r.Shadow.SamplePercent == 0 {
+				r.Shadow.SamplePercent = 100
+			}
+			if r.Shadow.Timeout == 0 {
+				r.Shadow.Timeout = Duration(time.Second)
+			}
+			if r.Shadow.MaxConcurrent == 0 {
+				r.Shadow.MaxConcurrent = 4
+			}
+		}
 		for j := range r.Backends {
 			if r.Backends[j].Weight <= 0 {
 				r.Backends[j].Weight = 1
@@ -302,6 +321,17 @@ func validate(cfg *Config) error {
 		if r.Resilience.CircuitFailureThreshold < 1 || r.Resilience.CircuitCooldown.Std() <= 0 || r.Resilience.MaxConcurrentPerBackend < 1 || r.Resilience.MaxConcurrentRetries < 1 || r.Resilience.MaxConcurrentRequests < 1 {
 			return fmt.Errorf("route %q resilience values must be positive", r.Name)
 		}
+		if r.Shadow.URL != "" {
+			if !strings.HasPrefix(r.Shadow.URL, "http://") && !strings.HasPrefix(r.Shadow.URL, "https://") {
+				return fmt.Errorf("route %q shadow URL must be http(s)", r.Name)
+			}
+			if r.Shadow.SamplePercent <= 0 || r.Shadow.SamplePercent > 100 {
+				return fmt.Errorf("route %q shadow sample_percent must be greater than 0 and at most 100", r.Name)
+			}
+			if r.Shadow.Timeout.Std() <= 0 || r.Shadow.MaxConcurrent < 1 {
+				return fmt.Errorf("route %q shadow timeout and max_concurrent must be positive", r.Name)
+			}
+		}
 		backends := map[string]struct{}{}
 		for _, b := range r.Backends {
 			if !strings.HasPrefix(b.URL, "http://") && !strings.HasPrefix(b.URL, "https://") {
@@ -331,7 +361,7 @@ func headerPolicyNames(policy HeaderConfig) []string {
 
 func isReservedHeader(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "", "connection", "proxy-connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "x-authenticated-subject", "x-authenticated-role", "x-gatego-proxy":
+	case "", "connection", "proxy-connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "x-authenticated-subject", "x-authenticated-role", "x-gatego-proxy", "x-gatego-shadow":
 		return true
 	default:
 		return false

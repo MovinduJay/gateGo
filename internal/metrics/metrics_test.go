@@ -19,6 +19,7 @@ func TestContainmentMetricsAreExposed(t *testing.T) {
 	m.IncConfigReload("success")
 	m.IncConfigReload("failure")
 	m.SetConfigRevision("abc123")
+	m.IncShadowRequest("api", "success")
 	rr := httptest.NewRecorder()
 	m.ServeHTTP(rr, httptest.NewRequest("GET", "/metrics", nil))
 	body := rr.Body.String()
@@ -34,6 +35,7 @@ func TestContainmentMetricsAreExposed(t *testing.T) {
 		`gatego_config_reloads_total{result="success"} 1`,
 		`gatego_config_reloads_total{result="failure"} 1`,
 		`gatego_config_info{revision="abc123"} 1`,
+		`gatego_shadow_requests_total{route="api",result="success"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metric %q missing from:\n%s", want, body)

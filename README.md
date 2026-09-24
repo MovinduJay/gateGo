@@ -70,6 +70,19 @@ Per-route `headers` policies can set or remove request and response headers at t
 
 Routes may set `strip_path_prefix` when the external API namespace should not be forwarded upstream. Query strings are preserved, and the same rewrite is applied to normal HTTP and WebSocket requests.
 
+Candidate releases can be evaluated with bounded shadow traffic:
+
+```json
+"shadow": {
+  "url": "http://candidate:9004",
+  "sample_percent": 10,
+  "timeout": "750ms",
+  "max_concurrent": 4
+}
+```
+
+Only retry-safe requests are copied. Shadow calls run asynchronously behind their own concurrency limit and cannot change the primary response, consume retry capacity, or affect backend circuits.
+
 ## Run locally
 
 Start three demo backends, then GateGo with the local configuration:

@@ -113,6 +113,58 @@ func TestConcurrentFailureIsContainedToBadBackend(t *testing.T) {
 	}
 }
 
+func TestShadowTrafficIsAsynchronousAndBounded(t *testing.T) {
+	shadowStarted := make(chan struct{}, 2)
+	releaseShadow := make(chan struct{})
+	shadow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-GateGo-Shadow") != "true" || r.URL.RequestURI() != "/test?candidate=true" {
+			http.Error(w, "invalid shadow request", http.StatusBadRequest)
+			return
+		}
+		shadowStarted <- struct{}{}
+		<-releaseShadow
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer shadow.Close()
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer primary.Close()
+	raw := fmt.Sprintf(`{"routes":[{"name":"api","path_prefix":"/api","strip_path_prefix":true,"shadow":{"url":%q,"sample_percent":100,"timeout":"2s","max_concurrent":1},"backends":[{"url":%q}]}]}`, shadow.URL, primary.URL)
+	cfg, err := config.Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := metrics.New()
+	gw, err := New("", cfg, "secret", "admin", nil, m, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now()
+	first := httptest.NewRecorder()
+	gw.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "http://gateway/api/test?candidate=true", nil))
+	if first.Code != http.StatusOK || time.Since(started) > 500*time.Millisecond {
+		t.Fatalf("primary response was affected by shadow: status=%d duration=%s", first.Code, time.Since(started))
+	}
+	select {
+	case <-shadowStarted:
+	case <-time.After(time.Second):
+		t.Fatal("shadow request was not sent")
+	}
+	second := httptest.NewRecorder()
+	gw.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "http://gateway/api/test?candidate=true", nil))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second primary status = %d", second.Code)
+	}
+	close(releaseShadow)
+	time.Sleep(20 * time.Millisecond)
+	metricsRR := httptest.NewRecorder()
+	m.ServeHTTP(metricsRR, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := metricsRR.Body.String()
+	if !strings.Contains(body, `gatego_shadow_requests_total{route="api",result="skipped"} 1`) || !strings.Contains(body, `gatego_shadow_requests_total{route="api",result="success"} 1`) {
+		t.Fatalf("shadow metrics missing: %s", body)
+	}
+}
+
 func TestDeadAndSlowBackendsFailOver(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -39,6 +39,7 @@ type Route struct {
 	requestSlots chan struct{}
 	allowCIDRs   []*net.IPNet
 	denyCIDRs    []*net.IPNet
+	shadowSlots  chan struct{}
 }
 
 type routeSet struct {
@@ -115,6 +116,7 @@ func buildRouteSet(cfg *config.Config) (*routeSet, error) {
 			Config: rc, Balancer: lb,
 			retrySlots: make(chan struct{}, rc.Resilience.MaxConcurrentRetries), requestSlots: make(chan struct{}, rc.Resilience.MaxConcurrentRequests),
 			allowCIDRs: parseCIDRs(rc.Access.AllowCIDRs), denyCIDRs: parseCIDRs(rc.Access.DenyCIDRs),
+			shadowSlots: makeShadowSlots(rc.Shadow),
 		})
 	}
 	return set, nil
@@ -620,6 +622,7 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request, route *Route
 		g.respondJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": err.Error(), "limit_bytes": maxBodyBytes})
 		return
 	}
+	g.maybeShadow(r, route, body)
 
 	maxAttempts := 1
 	if retrySafe(r) {
@@ -857,6 +860,51 @@ func applyResponseHeaderPolicy(header http.Header, policy config.HeaderConfig) {
 	}
 }
 
+func makeShadowSlots(policy config.ShadowConfig) chan struct{} {
+	if policy.URL == "" {
+		return nil
+	}
+	return make(chan struct{}, policy.MaxConcurrent)
+}
+
+func (g *Gateway) maybeShadow(original *http.Request, route *Route, body []byte) {
+	policy := route.Config.Shadow
+	if policy.URL == "" || !retrySafe(original) || mathrand.Float64()*100 >= policy.SamplePercent {
+		return
+	}
+	select {
+	case route.shadowSlots <- struct{}{}:
+	default:
+		g.metrics.IncShadowRequest(route.Config.Name, "skipped")
+		return
+	}
+	bodyCopy := append([]byte(nil), body...)
+	go func() {
+		defer func() { <-route.shadowSlots }()
+		ctx, cancel := context.WithTimeout(context.Background(), policy.Timeout.Std())
+		defer cancel()
+		req, err := buildUpstreamRequest(ctx, original, policy.URL, bodyCopy, route.Config.PathPrefix, route.Config.StripPathPrefix)
+		if err != nil {
+			g.metrics.IncShadowRequest(route.Config.Name, "failure")
+			return
+		}
+		applyRequestHeaderPolicy(req.Header, route.Config.Headers)
+		req.Header.Set("X-GateGo-Shadow", "true")
+		resp, err := g.client.Do(req)
+		if err != nil {
+			g.metrics.IncShadowRequest(route.Config.Name, "failure")
+			return
+		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		_ = resp.Body.Close()
+		if resp.StatusCode >= 500 {
+			g.metrics.IncShadowRequest(route.Config.Name, "failure")
+			return
+		}
+		g.metrics.IncShadowRequest(route.Config.Name, "success")
+	}()
+}
+
 func retrySafe(r *http.Request) bool {
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodPut, http.MethodDelete:
@@ -1021,7 +1069,7 @@ func containsFold(values []string, wanted string) bool {
 }
 
 func sanitizeInboundHeaders(h http.Header, trustForwarded bool) {
-	for _, k := range []string{"X-Authenticated-Subject", "X-Authenticated-Role", "X-GateGo-Proxy"} {
+	for _, k := range []string{"X-Authenticated-Subject", "X-Authenticated-Role", "X-GateGo-Proxy", "X-GateGo-Shadow"} {
 		h.Del(k)
 	}
 	if !trustForwarded {

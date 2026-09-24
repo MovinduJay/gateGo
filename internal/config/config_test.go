@@ -83,6 +83,21 @@ func TestParseRejectsReservedHeaderTransforms(t *testing.T) {
 	}
 }
 
+func TestShadowPolicyDefaultsAndValidation(t *testing.T) {
+	cfg, err := Parse([]byte(`{"routes":[{"name":"api","shadow":{"url":"http://candidate"},"backends":[{"url":"http://primary"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shadow := cfg.Routes[0].Shadow
+	if shadow.SamplePercent != 100 || shadow.Timeout.Std() != time.Second || shadow.MaxConcurrent != 4 {
+		t.Fatalf("unexpected shadow defaults: %+v", shadow)
+	}
+	_, err = Parse([]byte(`{"routes":[{"name":"api","shadow":{"url":"ftp://candidate","sample_percent":101},"backends":[{"url":"http://primary"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "shadow URL must be http(s)") {
+		t.Fatalf("invalid shadow error = %v", err)
+	}
+}
+
 func TestParseAndSortLongestPrefixFirst(t *testing.T) {
 	raw := []byte(`{
 	  "routes": [
