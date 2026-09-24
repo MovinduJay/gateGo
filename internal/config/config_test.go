@@ -116,6 +116,17 @@ func TestAuthModesAreDefaultedAndValidated(t *testing.T) {
 	}
 }
 
+func TestLoadBalancingStrategyValidation(t *testing.T) {
+	cfg, err := Parse([]byte(`{"routes":[{"name":"api","load_balancing":"least_connections","backends":[{"url":"http://a"}]}]}`))
+	if err != nil || cfg.Routes[0].LoadBalancing != "least_connections" {
+		t.Fatalf("least-connections config = %+v error=%v", cfg, err)
+	}
+	_, err = Parse([]byte(`{"routes":[{"name":"api","load_balancing":"random","backends":[{"url":"http://a"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "unsupported load_balancing") {
+		t.Fatalf("unsupported strategy error = %v", err)
+	}
+}
+
 func TestParseAndSortLongestPrefixFirst(t *testing.T) {
 	raw := []byte(`{
 	  "routes": [

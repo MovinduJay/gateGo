@@ -65,6 +65,7 @@ type RouteConfig struct {
 	Name                string           `json:"name"`
 	PathPrefix          string           `json:"path_prefix"`
 	StripPathPrefix     bool             `json:"strip_path_prefix"`
+	LoadBalancing       string           `json:"load_balancing"`
 	Methods             []string         `json:"methods"`
 	AuthRequired        bool             `json:"auth_required"`
 	Auth                AuthConfig       `json:"auth"`
@@ -221,6 +222,10 @@ func applyDefaults(cfg *Config) {
 		if r.PathPrefix == "" {
 			r.PathPrefix = "/"
 		}
+		if r.LoadBalancing == "" {
+			r.LoadBalancing = "weighted_round_robin"
+		}
+		r.LoadBalancing = strings.ToLower(strings.TrimSpace(r.LoadBalancing))
 		if r.Timeout == 0 {
 			r.Timeout = Duration(3 * time.Second)
 		}
@@ -288,6 +293,9 @@ func validate(cfg *Config) error {
 		seen[r.Name] = struct{}{}
 		if !strings.HasPrefix(r.PathPrefix, "/") {
 			return fmt.Errorf("route %q path_prefix must start with /", r.Name)
+		}
+		if r.LoadBalancing != "weighted_round_robin" && r.LoadBalancing != "least_connections" {
+			return fmt.Errorf("route %q has unsupported load_balancing strategy %q", r.Name, r.LoadBalancing)
 		}
 		path := strings.TrimSuffix(r.PathPrefix, "/")
 		if path == "" {

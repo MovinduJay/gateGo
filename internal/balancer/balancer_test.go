@@ -80,3 +80,29 @@ func TestDrainingBackendIsExcluded(t *testing.T) {
 		t.Fatalf("all draining should make route unavailable, got %v", err)
 	}
 }
+
+func TestLeastConnectionsPrefersLessLoadedBackend(t *testing.T) {
+	resilience := config.ResilienceConfig{
+		CircuitFailureThreshold: 20,
+		CircuitCooldown:         config.Duration(10 * time.Second),
+		MaxConcurrentPerBackend: 4,
+		MaxConcurrentRetries:    1,
+	}
+	lb, err := NewWithStrategy([]config.BackendConfig{{URL: "http://a", Weight: 1}, {URL: "http://b", Weight: 1}}, resilience, "least_connections")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := lb.Pick()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Release()
+	second, err := lb.Pick()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Release()
+	if first == second {
+		t.Fatalf("least-connections selected loaded backend %s", first.URL)
+	}
+}

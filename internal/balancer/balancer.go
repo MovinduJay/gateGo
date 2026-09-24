@@ -80,10 +80,16 @@ func (b *Backend) MarkHealth(ok bool, failureThreshold, successThreshold int) {
 type WeightedRoundRobin struct {
 	mu       sync.Mutex
 	backends []*Backend
+	strategy string
+	next     int
 }
 
 func New(configs []config.BackendConfig, resilience config.ResilienceConfig) (*WeightedRoundRobin, error) {
-	b := &WeightedRoundRobin{}
+	return NewWithStrategy(configs, resilience, "weighted_round_robin")
+}
+
+func NewWithStrategy(configs []config.BackendConfig, resilience config.ResilienceConfig, strategy string) (*WeightedRoundRobin, error) {
+	b := &WeightedRoundRobin{strategy: strategy}
 	for _, c := range configs {
 		backend, err := NewBackend(c, resilience)
 		if err != nil {
@@ -98,6 +104,13 @@ func (w *WeightedRoundRobin) Pick() (*Backend, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	if w.strategy == "least_connections" {
+		return w.pickLeastConnections()
+	}
+	return w.pickWeighted()
+}
+
+func (w *WeightedRoundRobin) pickWeighted() (*Backend, error) {
 	var best *Backend
 	total := 0
 	busy := false
@@ -129,6 +142,44 @@ func (w *WeightedRoundRobin) Pick() (*Backend, error) {
 	}
 	best.currentWeight -= total
 	return best, nil
+}
+
+func (w *WeightedRoundRobin) pickLeastConnections() (*Backend, error) {
+	minimum := int(^uint(0) >> 1)
+	candidates := make([]*Backend, 0, len(w.backends))
+	busy := false
+	for _, backend := range w.backends {
+		if backend.Draining.Load() || !backend.Healthy.Load() || !backend.Breaker.Available() {
+			continue
+		}
+		inflight := backend.InFlight()
+		if inflight == backend.Capacity() {
+			busy = true
+			continue
+		}
+		if inflight < minimum {
+			minimum = inflight
+			candidates = candidates[:0]
+		}
+		if inflight == minimum {
+			candidates = append(candidates, backend)
+		}
+	}
+	if len(candidates) == 0 {
+		if busy {
+			return nil, ErrAllBackendsBusy
+		}
+		return nil, ErrNoBackendAvailable
+	}
+	selected := candidates[w.next%len(candidates)]
+	w.next++
+	if !selected.Breaker.Allow() {
+		return nil, errors.New("selected backend circuit became unavailable")
+	}
+	if !selected.TryAcquire() {
+		return nil, errors.New("selected backend bulkhead is full")
+	}
+	return selected, nil
 }
 
 func (w *WeightedRoundRobin) Backends() []*Backend {

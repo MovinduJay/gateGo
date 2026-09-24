@@ -110,7 +110,7 @@ func (g *Gateway) recordCircuitState(route string, backend *balancer.Backend) {
 func buildRouteSet(cfg *config.Config) (*routeSet, error) {
 	set := &routeSet{Config: cfg, Revision: configRevision(cfg)}
 	for _, rc := range cfg.Routes {
-		lb, err := balancer.New(rc.Backends, rc.Resilience)
+		lb, err := balancer.NewWithStrategy(rc.Backends, rc.Resilience, rc.LoadBalancing)
 		if err != nil {
 			return nil, fmt.Errorf("route %s: %w", rc.Name, err)
 		}
