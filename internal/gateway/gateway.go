@@ -717,7 +717,7 @@ attempts:
 			break
 		}
 
-		if retryableStatus(resp.StatusCode) && attempt+1 < maxAttempts {
+		if retryableStatus(route.Config.Resilience.RetryStatuses, resp.StatusCode) && attempt+1 < maxAttempts {
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 			resp.Body.Close()
 			backend.Release()
@@ -938,8 +938,13 @@ func retrySafe(r *http.Request) bool {
 	}
 }
 
-func retryableStatus(code int) bool {
-	return code == http.StatusInternalServerError || code == http.StatusBadGateway || code == http.StatusServiceUnavailable || code == http.StatusGatewayTimeout
+func retryableStatus(statuses []int, code int) bool {
+	for _, status := range statuses {
+		if status == code {
+			return true
+		}
+	}
+	return false
 }
 
 func upstreamFailureResponse(err error) (int, string) {

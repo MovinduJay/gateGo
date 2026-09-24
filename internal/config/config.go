@@ -122,6 +122,7 @@ type ResilienceConfig struct {
 	MaxConcurrentPerBackend int      `json:"max_concurrent_per_backend"`
 	MaxConcurrentRetries    int      `json:"max_concurrent_retries"`
 	MaxConcurrentRequests   int      `json:"max_concurrent_requests"`
+	RetryStatuses           []int    `json:"retry_statuses"`
 }
 type RateLimitConfig struct {
 	RequestsPerSecond float64 `json:"requests_per_second"`
@@ -250,6 +251,9 @@ func applyDefaults(cfg *Config) {
 		if r.Resilience.MaxConcurrentRequests == 0 {
 			r.Resilience.MaxConcurrentRequests = 256
 		}
+		if len(r.Resilience.RetryStatuses) == 0 {
+			r.Resilience.RetryStatuses = []int{500, 502, 503, 504}
+		}
 		if r.Shadow.URL != "" {
 			if r.Shadow.SamplePercent == 0 {
 				r.Shadow.SamplePercent = 100
@@ -361,6 +365,16 @@ func validate(cfg *Config) error {
 		}
 		if r.Resilience.CircuitFailureThreshold < 1 || r.Resilience.CircuitCooldown.Std() <= 0 || r.Resilience.MaxConcurrentPerBackend < 1 || r.Resilience.MaxConcurrentRetries < 1 || r.Resilience.MaxConcurrentRequests < 1 {
 			return fmt.Errorf("route %q resilience values must be positive", r.Name)
+		}
+		retryStatuses := map[int]struct{}{}
+		for _, status := range r.Resilience.RetryStatuses {
+			if status < 400 || status > 599 {
+				return fmt.Errorf("route %q retry status %d must be between 400 and 599", r.Name, status)
+			}
+			if _, exists := retryStatuses[status]; exists {
+				return fmt.Errorf("route %q contains duplicate retry status %d", r.Name, status)
+			}
+			retryStatuses[status] = struct{}{}
 		}
 		if r.Shadow.URL != "" {
 			if !strings.HasPrefix(r.Shadow.URL, "http://") && !strings.HasPrefix(r.Shadow.URL, "https://") {

@@ -63,6 +63,8 @@ On Windows without `make`, run:
 
 Retries are contained by per-route concurrency budgets and each backend has an independent bulkhead. Circuit thresholds, cooldowns, bulkhead capacity, and retry capacity are configurable per route through the `resilience` object.
 
+Retry classification is configurable through `resilience.retry_statuses`; the default is `500`, `502`, `503`, and `504`. Only error status codes can be configured, and non-idempotent requests still require an `Idempotency-Key` regardless of status policy.
+
 Routes may also define `access.allow_cidrs` and `access.deny_cidrs`. Deny rules take precedence, and forwarded client addresses are only considered when `GATEGO_TRUST_FORWARDED_HEADERS=true`; otherwise GateGo uses the direct peer address to prevent header spoofing.
 
 Authentication can use JWT or API keys per route. API-key configuration names an environment variable rather than containing the secret itself; GateGo compares keys in constant time and removes the credential header before proxying. The existing `auth_required` setting remains a backward-compatible shorthand for JWT mode.

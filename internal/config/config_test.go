@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -124,6 +125,20 @@ func TestLoadBalancingStrategyValidation(t *testing.T) {
 	_, err = Parse([]byte(`{"routes":[{"name":"api","load_balancing":"random","backends":[{"url":"http://a"}]}]}`))
 	if err == nil || !strings.Contains(err.Error(), "unsupported load_balancing") {
 		t.Fatalf("unsupported strategy error = %v", err)
+	}
+}
+
+func TestRetryStatusDefaultsAndValidation(t *testing.T) {
+	cfg, err := Parse([]byte(`{"routes":[{"name":"api","backends":[{"url":"http://a"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(cfg.Routes[0].Resilience.RetryStatuses); got != "[500 502 503 504]" {
+		t.Fatalf("default retry statuses = %s", got)
+	}
+	_, err = Parse([]byte(`{"routes":[{"name":"api","resilience":{"retry_statuses":[200]},"backends":[{"url":"http://a"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "must be between 400 and 599") {
+		t.Fatalf("invalid retry status error = %v", err)
 	}
 }
 

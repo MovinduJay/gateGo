@@ -74,6 +74,27 @@ func TestRetryMatrixAndCircuitFailover(t *testing.T) {
 	}
 }
 
+func TestConfiguredRetryStatusCanFailOver(t *testing.T) {
+	limited := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTooManyRequests) }))
+	defer limited.Close()
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer healthy.Close()
+	raw := fmt.Sprintf(`{"routes":[{"name":"api","path_prefix":"/api","retries":1,"resilience":{"retry_statuses":[429]},"backends":[{"url":%q},{"url":%q}]}]}`, limited.URL, healthy.URL)
+	cfg, err := config.Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://gateway/api/test", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("custom retry status failed over with status %d", rr.Code)
+	}
+}
+
 func TestConcurrentFailureIsContainedToBadBackend(t *testing.T) {
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
 	defer bad.Close()
