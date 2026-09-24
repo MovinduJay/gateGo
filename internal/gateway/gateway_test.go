@@ -15,11 +15,15 @@ import (
 )
 
 func TestRetryFailsOverToSecondBackend(t *testing.T) {
+	var failingAttempt, healthyAttempt, routeHeader string
 	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		failingAttempt = r.Header.Get("X-GateGo-Attempt")
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer failing.Close()
 	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		healthyAttempt = r.Header.Get("X-GateGo-Attempt")
+		routeHeader = r.Header.Get("X-GateGo-Route")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("healthy"))
 	}))
@@ -52,6 +56,9 @@ func TestRetryFailsOverToSecondBackend(t *testing.T) {
 	}
 	if rr.Header().Get("X-GateGo-Backend") == "" {
 		t.Fatal("expected selected backend header")
+	}
+	if failingAttempt != "1" || healthyAttempt != "2" || routeHeader != "api" {
+		t.Fatalf("upstream metadata: failing attempt=%q healthy attempt=%q route=%q", failingAttempt, healthyAttempt, routeHeader)
 	}
 }
 

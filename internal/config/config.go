@@ -416,7 +416,7 @@ func headerPolicyNames(policy HeaderConfig) []string {
 
 func isReservedHeader(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "", "connection", "proxy-connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "x-authenticated-subject", "x-authenticated-role", "x-gatego-proxy", "x-gatego-shadow":
+	case "", "connection", "proxy-connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "x-authenticated-subject", "x-authenticated-role", "x-gatego-proxy", "x-gatego-shadow", "x-gatego-route", "x-gatego-attempt":
 		return true
 	default:
 		return false

@@ -693,6 +693,8 @@ attempts:
 			break
 		}
 		applyRequestHeaderPolicy(upstreamReq.Header, route.Config.Headers)
+		upstreamReq.Header.Set("X-GateGo-Route", route.Config.Name)
+		upstreamReq.Header.Set("X-GateGo-Attempt", strconv.Itoa(attempt+1))
 		resp, reqErr := g.client.Do(upstreamReq)
 		if reqErr != nil {
 			backend.Release()
@@ -783,6 +785,8 @@ func (g *Gateway) serveWebSocket(w http.ResponseWriter, r *http.Request, route *
 		}
 		req.Header.Set("X-GateGo-Proxy", "1")
 		applyRequestHeaderPolicy(req.Header, route.Config.Headers)
+		req.Header.Set("X-GateGo-Route", route.Config.Name)
+		req.Header.Set("X-GateGo-Attempt", "1")
 	}
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		applyResponseHeaderPolicy(resp.Header, route.Config.Headers)
@@ -912,6 +916,8 @@ func (g *Gateway) maybeShadow(original *http.Request, route *Route, body []byte)
 		}
 		applyRequestHeaderPolicy(req.Header, route.Config.Headers)
 		req.Header.Set("X-GateGo-Shadow", "true")
+		req.Header.Set("X-GateGo-Route", route.Config.Name)
+		req.Header.Set("X-GateGo-Attempt", "1")
 		resp, err := g.client.Do(req)
 		if err != nil {
 			g.metrics.IncShadowRequest(route.Config.Name, "failure")
@@ -1096,7 +1102,7 @@ func containsFold(values []string, wanted string) bool {
 }
 
 func sanitizeInboundHeaders(h http.Header, trustForwarded bool) {
-	for _, k := range []string{"X-Authenticated-Subject", "X-Authenticated-Role", "X-GateGo-Proxy", "X-GateGo-Shadow"} {
+	for _, k := range []string{"X-Authenticated-Subject", "X-Authenticated-Role", "X-GateGo-Proxy", "X-GateGo-Shadow", "X-GateGo-Route", "X-GateGo-Attempt"} {
 		h.Del(k)
 	}
 	if !trustForwarded {

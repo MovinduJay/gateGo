@@ -36,6 +36,8 @@ Health checks use bounded concurrency (`health.max_concurrent`, default 16), pre
 ### Retry correctness
 GateGo retries idempotent methods (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`) automatically. `POST` and `PATCH` are retried only when the client supplies `Idempotency-Key`. This avoids turning a network retry into duplicate business side effects.
 
+Every upstream call receives protected `X-GateGo-Route` and `X-GateGo-Attempt` headers. Caller-supplied versions are removed, so backend logs can reliably distinguish the initial request from retries; shadow copies additionally receive `X-GateGo-Shadow: true`.
+
 Client cancellation is classified separately from an upstream timeout. When the caller disconnects, GateGo cancels the upstream request immediately, releases capacity, does not retry, and does not increment the backend circuit. Cancellations are counted by `gatego_client_canceled_total`.
 
 Each route also has a concurrent retry budget, and each backend has an independent bulkhead. These bounds prevent a failed replica from consuming the capacity needed by healthy replicas. The defaults can be overridden per route:
