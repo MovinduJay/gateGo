@@ -177,12 +177,18 @@ func TestShadowTrafficIsAsynchronousAndBounded(t *testing.T) {
 		t.Fatalf("second primary status = %d", second.Code)
 	}
 	close(releaseShadow)
-	time.Sleep(20 * time.Millisecond)
-	metricsRR := httptest.NewRecorder()
-	m.ServeHTTP(metricsRR, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	body := metricsRR.Body.String()
-	if !strings.Contains(body, `gatego_shadow_requests_total{route="api",result="skipped"} 1`) || !strings.Contains(body, `gatego_shadow_requests_total{route="api",result="success"} 1`) {
-		t.Fatalf("shadow metrics missing: %s", body)
+	deadline := time.Now().Add(time.Second)
+	for {
+		metricsRR := httptest.NewRecorder()
+		m.ServeHTTP(metricsRR, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+		body := metricsRR.Body.String()
+		if strings.Contains(body, `gatego_shadow_requests_total{route="api",result="skipped"} 1`) && strings.Contains(body, `gatego_shadow_requests_total{route="api",result="success"} 1`) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("shadow metrics missing: %s", body)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
