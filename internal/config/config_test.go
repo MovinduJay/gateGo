@@ -98,6 +98,24 @@ func TestShadowPolicyDefaultsAndValidation(t *testing.T) {
 	}
 }
 
+func TestAuthModesAreDefaultedAndValidated(t *testing.T) {
+	cfg, err := Parse([]byte(`{"routes":[{"name":"legacy","auth_required":true,"backends":[{"url":"http://a"}]},{"name":"key","path_prefix":"/key","auth":{"mode":"api_key","api_key_env":"PARTNER_KEY"},"backends":[{"url":"http://b"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	modes := map[string]AuthConfig{}
+	for _, route := range cfg.Routes {
+		modes[route.Name] = route.Auth
+	}
+	if modes["legacy"].Mode != "jwt" || modes["key"].Mode != "api_key" || modes["key"].Header != "X-API-Key" {
+		t.Fatalf("unexpected auth defaults: %+v", modes)
+	}
+	_, err = Parse([]byte(`{"routes":[{"name":"api","auth":{"mode":"basic"},"backends":[{"url":"http://a"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "unsupported auth mode") {
+		t.Fatalf("unsupported auth error = %v", err)
+	}
+}
+
 func TestParseAndSortLongestPrefixFirst(t *testing.T) {
 	raw := []byte(`{
 	  "routes": [

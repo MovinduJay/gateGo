@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -40,6 +41,7 @@ type Route struct {
 	allowCIDRs   []*net.IPNet
 	denyCIDRs    []*net.IPNet
 	shadowSlots  chan struct{}
+	apiKey       []byte
 }
 
 type routeSet struct {
@@ -112,11 +114,20 @@ func buildRouteSet(cfg *config.Config) (*routeSet, error) {
 		if err != nil {
 			return nil, fmt.Errorf("route %s: %w", rc.Name, err)
 		}
+		var apiKey []byte
+		if rc.Auth.Mode == "api_key" {
+			secret := os.Getenv(rc.Auth.APIKeyEnv)
+			if secret == "" {
+				return nil, fmt.Errorf("route %s: environment variable %s is required for API-key auth", rc.Name, rc.Auth.APIKeyEnv)
+			}
+			apiKey = []byte(secret)
+		}
 		set.Routes = append(set.Routes, &Route{
 			Config: rc, Balancer: lb,
 			retrySlots: make(chan struct{}, rc.Resilience.MaxConcurrentRetries), requestSlots: make(chan struct{}, rc.Resilience.MaxConcurrentRequests),
 			allowCIDRs: parseCIDRs(rc.Access.AllowCIDRs), denyCIDRs: parseCIDRs(rc.Access.DenyCIDRs),
 			shadowSlots: makeShadowSlots(rc.Shadow),
+			apiKey:      apiKey,
 		})
 	}
 	return set, nil
@@ -329,7 +340,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	identity := clientIdentityIP(r, g.trustForwarded)
-	if route.Config.AuthRequired {
+	switch route.Config.Auth.Mode {
+	case "jwt":
 		claims, err := g.jwt.ValidateAuthorization(r.Header.Get("Authorization"))
 		if err != nil {
 			g.record(route.Config.Name, "", http.StatusUnauthorized, started)
@@ -339,6 +351,16 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		identity = claims.Subject
 		r.Header.Set("X-Authenticated-Subject", claims.Subject)
 		r.Header.Set("X-Authenticated-Role", claims.Role)
+	case "api_key":
+		provided := []byte(r.Header.Get(route.Config.Auth.Header))
+		if len(provided) != len(route.apiKey) || subtle.ConstantTimeCompare(provided, route.apiKey) != 1 {
+			g.record(route.Config.Name, "", http.StatusUnauthorized, started)
+			g.respondJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized", "request_id": requestID})
+			return
+		}
+		digest := sha256.Sum256(route.apiKey)
+		identity = "api-key:" + hex.EncodeToString(digest[:8])
+		r.Header.Del(route.Config.Auth.Header)
 	}
 
 	allowed := g.allowRate(r.Context(), route, identity)

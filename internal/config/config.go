@@ -67,6 +67,7 @@ type RouteConfig struct {
 	StripPathPrefix     bool             `json:"strip_path_prefix"`
 	Methods             []string         `json:"methods"`
 	AuthRequired        bool             `json:"auth_required"`
+	Auth                AuthConfig       `json:"auth"`
 	RateLimit           RateLimitConfig  `json:"rate_limit"`
 	Resilience          ResilienceConfig `json:"resilience"`
 	Timeout             Duration         `json:"timeout"`
@@ -77,6 +78,12 @@ type RouteConfig struct {
 	Headers             HeaderConfig     `json:"headers"`
 	Shadow              ShadowConfig     `json:"shadow"`
 	Backends            []BackendConfig  `json:"backends"`
+}
+
+type AuthConfig struct {
+	Mode      string `json:"mode"`
+	APIKeyEnv string `json:"api_key_env"`
+	Header    string `json:"header"`
 }
 
 type AccessConfig struct {
@@ -194,6 +201,17 @@ func applyDefaults(cfg *Config) {
 	}
 	for i := range cfg.Routes {
 		r := &cfg.Routes[i]
+		if r.Auth.Mode == "" {
+			if r.AuthRequired {
+				r.Auth.Mode = "jwt"
+			} else {
+				r.Auth.Mode = "none"
+			}
+		}
+		r.Auth.Mode = strings.ToLower(strings.TrimSpace(r.Auth.Mode))
+		if r.Auth.Mode == "api_key" && r.Auth.Header == "" {
+			r.Auth.Header = "X-API-Key"
+		}
 		for j := range r.Methods {
 			r.Methods[j] = strings.ToUpper(strings.TrimSpace(r.Methods[j]))
 		}
@@ -295,6 +313,18 @@ func validate(cfg *Config) error {
 		if r.MaxRequestBodyBytes < 0 {
 			return fmt.Errorf("route %q max_request_body_bytes cannot be negative", r.Name)
 		}
+		switch r.Auth.Mode {
+		case "none", "jwt":
+		case "api_key":
+			if strings.TrimSpace(r.Auth.APIKeyEnv) == "" {
+				return fmt.Errorf("route %q API-key auth requires api_key_env", r.Name)
+			}
+			if strings.TrimSpace(r.Auth.Header) == "" {
+				return fmt.Errorf("route %q API-key auth requires a header", r.Name)
+			}
+		default:
+			return fmt.Errorf("route %q has unsupported auth mode %q", r.Name, r.Auth.Mode)
+		}
 		for _, cidr := range append(append([]string{}, r.Access.AllowCIDRs...), r.Access.DenyCIDRs...) {
 			if _, _, err := net.ParseCIDR(cidr); err != nil {
 				return fmt.Errorf("route %q contains invalid access CIDR %q", r.Name, cidr)
@@ -316,6 +346,9 @@ func validate(cfg *Config) error {
 		for _, header := range headerPolicyNames(r.Headers) {
 			if isReservedHeader(header) {
 				return fmt.Errorf("route %q header policy cannot modify reserved header %q", r.Name, header)
+			}
+			if r.Auth.Mode == "api_key" && strings.EqualFold(header, r.Auth.Header) {
+				return fmt.Errorf("route %q header policy cannot modify its API-key header %q", r.Name, header)
 			}
 		}
 		if r.Resilience.CircuitFailureThreshold < 1 || r.Resilience.CircuitCooldown.Std() <= 0 || r.Resilience.MaxConcurrentPerBackend < 1 || r.Resilience.MaxConcurrentRetries < 1 || r.Resilience.MaxConcurrentRequests < 1 {

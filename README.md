@@ -1,6 +1,6 @@
 # GateGo
 
-GateGo is a resilient Go API gateway that keeps traffic flowing when an upstream fails. It combines weighted load balancing, active health checks, bounded retries, circuit breakers, JWT authentication, shared Redis rate limiting, graceful draining, metrics, traces, and atomic configuration reloads.
+GateGo is a resilient Go API gateway that keeps traffic flowing when an upstream fails. It combines weighted load balancing, active health checks, bounded retries, circuit breakers, JWT and API-key authentication, shared Redis rate limiting, graceful draining, metrics, traces, and atomic configuration reloads.
 
 ```mermaid
 flowchart LR
@@ -63,6 +63,8 @@ On Windows without `make`, run:
 Retries are contained by per-route concurrency budgets and each backend has an independent bulkhead. Circuit thresholds, cooldowns, bulkhead capacity, and retry capacity are configurable per route through the `resilience` object.
 
 Routes may also define `access.allow_cidrs` and `access.deny_cidrs`. Deny rules take precedence, and forwarded client addresses are only considered when `GATEGO_TRUST_FORWARDED_HEADERS=true`; otherwise GateGo uses the direct peer address to prevent header spoofing.
+
+Authentication can use JWT or API keys per route. API-key configuration names an environment variable rather than containing the secret itself; GateGo compares keys in constant time and removes the credential header before proxying. The existing `auth_required` setting remains a backward-compatible shorthand for JWT mode.
 
 Browser-facing routes can define a `cors` policy with allowed origins, methods, headers, exposed headers, credential handling, and preflight cache duration. Unsafe wildcard-origin plus credential configurations are rejected before activation.
 

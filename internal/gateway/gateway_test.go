@@ -359,6 +359,40 @@ func TestRouteCanStripPrefixAndPreserveQuery(t *testing.T) {
 	}
 }
 
+func TestAPIKeyAuthenticationUsesEnvironmentSecretAndStripsCredential(t *testing.T) {
+	t.Setenv("GATEGO_TEST_PARTNER_KEY", "correct-secret")
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Partner-Key") != "" {
+			http.Error(w, "credential leaked upstream", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	raw := `{"routes":[{"name":"partner","path_prefix":"/partner","auth":{"mode":"api_key","api_key_env":"GATEGO_TEST_PARTNER_KEY","header":"X-Partner-Key"},"backends":[{"url":"` + backend.URL + `"}]}]}`
+	cfg, err := config.Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func(key string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "http://gateway/partner/data", nil)
+		req.Header.Set("X-Partner-Key", key)
+		rr := httptest.NewRecorder()
+		gw.ServeHTTP(rr, req)
+		return rr
+	}
+	if rr := call("wrong"); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong key status = %d", rr.Code)
+	}
+	if rr := call("correct-secret"); rr.Code != http.StatusOK {
+		t.Fatalf("correct key status = %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestBackendDrainStopsNewTrafficAndPreservesInflight(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
