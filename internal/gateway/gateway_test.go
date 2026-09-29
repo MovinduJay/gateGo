@@ -503,6 +503,33 @@ func TestRouteAdmissionControlShedsExcessLoad(t *testing.T) {
 	}
 }
 
+func TestRateLimitResponsesExposeQuotaMetadata(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer backend.Close()
+	raw := []byte(`{"routes":[{"name":"api","path_prefix":"/api","rate_limit":{"requests_per_second":0.1,"burst":1},"backends":[{"url":"` + backend.URL + `"}]}]}`)
+	cfg, err := config.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func() *httptest.ResponseRecorder {
+		rr := httptest.NewRecorder()
+		gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://gateway/api/test", nil))
+		return rr
+	}
+	first := call()
+	if first.Code != http.StatusOK || first.Header().Get("RateLimit-Limit") != "1" || first.Header().Get("RateLimit-Remaining") != "0" {
+		t.Fatalf("first response = %d headers=%v", first.Code, first.Header())
+	}
+	denied := call()
+	if denied.Code != http.StatusTooManyRequests || denied.Header().Get("RateLimit-Reset") != "10" || denied.Header().Get("Retry-After") != "10" {
+		t.Fatalf("denied response = %d headers=%v", denied.Code, denied.Header())
+	}
+}
+
 func TestRouteRequestBodyLimitOverridesServerLimit(t *testing.T) {
 	called := false
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

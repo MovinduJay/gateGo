@@ -315,11 +315,12 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Header.Del(route.Config.Auth.Header)
 	}
 
-	allowed := g.allowRate(r.Context(), route, identity)
-	if !allowed {
+	decision := g.allowRate(r.Context(), route, identity)
+	setRateLimitHeaders(w.Header(), decision)
+	if !decision.Allowed {
 		g.metrics.IncRateLimited(route.Config.Name)
 		g.record(route.Config.Name, "", http.StatusTooManyRequests, started)
-		w.Header().Set("Retry-After", "1")
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(decision.RetryAfter)))
 		g.respondJSON(w, http.StatusTooManyRequests, map[string]any{"error": "rate limit exceeded", "request_id": requestID})
 		return
 	}
@@ -340,25 +341,44 @@ func (g *Gateway) match(path string) *Route {
 	return nil
 }
 
-func (g *Gateway) allowRate(ctx context.Context, route *Route, identity string) bool {
+func (g *Gateway) allowRate(ctx context.Context, route *Route, identity string) ratelimit.Decision {
 	key := route.Config.Name + ":" + identity
 	rl := route.Config.RateLimit
 	if g.redis != nil {
 		now := time.Now().UnixNano()
 		if now >= g.redisRetryAt.Load() {
-			ok, err := g.redis.Allow(ctx, key, rl.RequestsPerSecond, rl.Burst)
+			decision, err := g.redis.Check(ctx, key, rl.RequestsPerSecond, rl.Burst)
 			if err == nil {
 				g.redisRetryAt.Store(0)
-				return ok
+				g.metrics.SetRateLimitBackend("redis")
+				return decision
 			}
 			g.redisRetryAt.Store(time.Now().Add(time.Second).UnixNano())
+			g.metrics.IncRateLimitFallback()
 			if now >= g.redisWarnAt.Load() {
 				g.redisWarnAt.Store(time.Now().Add(time.Second).UnixNano())
 				g.logger.Warn("redis rate limiter unavailable; using local fallback", "error", err)
 			}
 		}
 	}
-	return g.local.Allow(key, rl.RequestsPerSecond, rl.Burst)
+	g.metrics.SetRateLimitBackend("local")
+	return g.local.Check(key, rl.RequestsPerSecond, rl.Burst)
+}
+
+func setRateLimitHeaders(header http.Header, decision ratelimit.Decision) {
+	header.Set("RateLimit-Limit", strconv.Itoa(decision.Limit))
+	header.Set("RateLimit-Remaining", strconv.Itoa(decision.Remaining))
+	if decision.RetryAfter > 0 {
+		header.Set("RateLimit-Reset", strconv.Itoa(retryAfterSeconds(decision.RetryAfter)))
+	}
+}
+
+func retryAfterSeconds(delay time.Duration) int {
+	seconds := int((delay + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
 }
 
 func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request, route *Route, started time.Time) {

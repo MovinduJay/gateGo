@@ -25,6 +25,8 @@ type Metrics struct {
 	inflight, retryInflight                        map[string]int64
 	healthy, circuit, draining                     map[string]float64
 	configRevision                                 string
+	rateLimitBackend                               string
+	rateLimitFallbacks                             uint64
 	durations                                      map[string]*hist
 }
 
@@ -89,6 +91,16 @@ func (m *Metrics) SetConfigRevision(revision string) {
 func (m *Metrics) IncShadowRequest(route, result string) {
 	m.mu.Lock()
 	m.shadowRequests[key(route, result)]++
+	m.mu.Unlock()
+}
+func (m *Metrics) SetRateLimitBackend(backend string) {
+	m.mu.Lock()
+	m.rateLimitBackend = backend
+	m.mu.Unlock()
+}
+func (m *Metrics) IncRateLimitFallback() {
+	m.mu.Lock()
+	m.rateLimitFallbacks++
 	m.mu.Unlock()
 }
 func (m *Metrics) SetHealthy(route, backend string, v float64) {
@@ -169,6 +181,14 @@ func (m *Metrics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if m.configRevision != "" {
 		fmt.Fprintf(w, "gatego_config_info{revision=\"%s\"} 1\n", esc(m.configRevision))
 	}
+	for _, backend := range []string{"local", "redis"} {
+		value := 0
+		if m.rateLimitBackend == backend {
+			value = 1
+		}
+		fmt.Fprintf(w, "gatego_rate_limit_backend{backend=\"%s\"} %d\n", backend, value)
+	}
+	fmt.Fprintf(w, "gatego_rate_limit_fallbacks_total %d\n", m.rateLimitFallbacks)
 	keys := sortedFloat(m.healthy)
 	for _, k := range keys {
 		fmt.Fprintf(w, "gatego_backend_healthy{%s} %g\n", labels(k, "route", "backend"), m.healthy[k])

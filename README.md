@@ -107,6 +107,8 @@ docker compose up -d --build
 
 GateGo #1 listens on port 8080 and GateGo #2 on port 8081. Both use the same Redis instance, so `/global-limit` has one global token bucket rather than a separate allowance per gateway.
 
+Rate-limited routes return `RateLimit-Limit`, `RateLimit-Remaining`, and—when exhausted—`RateLimit-Reset` plus a matching `Retry-After`. Local and Redis token buckets calculate these values from the same decision model. Prometheus exposes the active limiter backend and counts Redis-to-local fallback activations.
+
 Prometheus and Grafana are available with the observability profile. The OpenTelemetry Collector receives OTLP/HTTP traces and prints a basic export summary:
 
 ```powershell
