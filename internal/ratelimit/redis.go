@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const redisTokenBucketScript = `local d=redis.call('HMGET',KEYS[1],'tokens','ts');local t=tonumber(d[1]);local ts=tonumber(d[2]);local rate=tonumber(ARGV[1]);local burst=tonumber(ARGV[2]);local now=tonumber(ARGV[3]);if t==nil then t=burst end;if ts==nil then ts=now end;local delta=math.max(0,now-ts)/1000.0;t=math.min(burst,t+delta*rate);local allowed=0;if t>=1 then t=t-1;allowed=1 end;redis.call('HSET',KEYS[1],'tokens',t,'ts',now);redis.call('PEXPIRE',KEYS[1],math.ceil((burst/rate)*2000));return allowed`
+const redisTokenBucketScript = `local d=redis.call('HMGET',KEYS[1],'tokens','ts');local t=tonumber(d[1]);local ts=tonumber(d[2]);local rate=tonumber(ARGV[1]);local burst=tonumber(ARGV[2]);local now=tonumber(ARGV[3]);if t==nil then t=burst end;if ts==nil then ts=now end;local delta=math.max(0,now-ts)/1000.0;t=math.min(burst,t+delta*rate);local allowed=0;local retry=0;if t>=1 then t=t-1;allowed=1 else retry=math.ceil(((1-t)/rate)*1000) end;redis.call('HSET',KEYS[1],'tokens',t,'ts',now);redis.call('PEXPIRE',KEYS[1],math.ceil((burst/rate)*2000));return {allowed,math.floor(t),retry}`
 
 type redisConn struct {
 	net.Conn
@@ -111,21 +111,32 @@ func (r *RedisLimiter) Ping(ctx context.Context) error {
 	return err
 }
 func (r *RedisLimiter) Allow(ctx context.Context, key string, rate float64, burst int) (bool, error) {
+	decision, err := r.Check(ctx, key, rate, burst)
+	return decision.Allowed, err
+}
+
+func (r *RedisLimiter) Check(ctx context.Context, key string, rate float64, burst int) (Decision, error) {
 	c, err := r.get(ctx)
 	if err != nil {
-		return false, err
+		return Decision{}, err
 	}
 	_ = c.SetDeadline(time.Now().Add(r.timeout))
 	v, err := r.command(c, "EVAL", redisTokenBucketScript, "1", "gatego:rl:"+key, strconv.FormatFloat(rate, 'f', -1, 64), strconv.Itoa(burst), strconv.FormatInt(time.Now().UnixMilli(), 10))
 	r.put(c, err == nil)
 	if err != nil {
-		return false, err
+		return Decision{}, err
 	}
-	n, ok := v.(int64)
-	if !ok {
-		return false, fmt.Errorf("unexpected redis reply %T", v)
+	values, ok := v.([]any)
+	if !ok || len(values) != 3 {
+		return Decision{}, fmt.Errorf("unexpected redis rate-limit reply %T", v)
 	}
-	return n == 1, nil
+	allowed, allowedOK := values[0].(int64)
+	remaining, remainingOK := values[1].(int64)
+	retryMS, retryOK := values[2].(int64)
+	if !allowedOK || !remainingOK || !retryOK {
+		return Decision{}, fmt.Errorf("unexpected redis rate-limit values %#v", values)
+	}
+	return Decision{Allowed: allowed == 1, Limit: burst, Remaining: int(remaining), RetryAfter: time.Duration(retryMS) * time.Millisecond}, nil
 }
 func (r *RedisLimiter) Close() error {
 	r.mu.Lock()
@@ -186,6 +197,23 @@ func readRESP(r *bufio.Reader) (any, error) {
 			return nil, err
 		}
 		return string(buf[:n]), nil
+	case '*':
+		n, err := strconv.Atoi(line[1:])
+		if err != nil {
+			return nil, err
+		}
+		if n < 0 {
+			return nil, nil
+		}
+		values := make([]any, 0, n)
+		for i := 0; i < n; i++ {
+			value, err := readRESP(r)
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, value)
+		}
+		return values, nil
 	default:
 		return nil, fmt.Errorf("unsupported redis reply %q", line)
 	}

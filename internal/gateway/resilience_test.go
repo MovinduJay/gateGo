@@ -347,11 +347,11 @@ func (f *fakeRedis) connection(c net.Conn) {
 			}
 			f.remaining[key] = n
 			f.mu.Unlock()
+			allowedValue := 0
 			if allowed {
-				_, _ = io.WriteString(c, ":1\r\n")
-			} else {
-				_, _ = io.WriteString(c, ":0\r\n")
+				allowedValue = 1
 			}
+			_, _ = fmt.Fprintf(c, "*3\r\n:%d\r\n:%d\r\n:%d\r\n", allowedValue, n, 1000)
 			continue
 		}
 		_, _ = io.WriteString(c, "+OK\r\n")
