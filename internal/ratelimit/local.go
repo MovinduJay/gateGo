@@ -1,9 +1,17 @@
 package ratelimit
 
 import (
+	"math"
 	"sync"
 	"time"
 )
+
+type Decision struct {
+	Allowed    bool
+	Limit      int
+	Remaining  int
+	RetryAfter time.Duration
+}
 
 type bucket struct {
 	tokens float64
@@ -23,8 +31,12 @@ func NewLocal() *LocalLimiter {
 }
 
 func (l *LocalLimiter) Allow(key string, rate float64, burst int) bool {
+	return l.Check(key, rate, burst).Allowed
+}
+
+func (l *LocalLimiter) Check(key string, rate float64, burst int) Decision {
 	if rate <= 0 || burst <= 0 {
-		return true
+		return Decision{Allowed: true, Limit: burst, Remaining: burst}
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -50,10 +62,15 @@ func (l *LocalLimiter) Allow(key string, rate float64, burst int) bool {
 	}
 	b.last, b.seen = now, now
 	if b.tokens < 1 {
-		return false
+		return Decision{
+			Allowed:    false,
+			Limit:      burst,
+			Remaining:  int(math.Floor(b.tokens)),
+			RetryAfter: time.Duration(math.Ceil((1-b.tokens)/rate*1000)) * time.Millisecond,
+		}
 	}
 	b.tokens--
-	return true
+	return Decision{Allowed: true, Limit: burst, Remaining: int(math.Floor(b.tokens))}
 }
 
 func (l *LocalLimiter) Cleanup(olderThan time.Duration) {
