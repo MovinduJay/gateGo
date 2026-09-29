@@ -172,6 +172,13 @@ func TestParseRejectsRelativeHealthPath(t *testing.T) {
 	}
 }
 
+func TestParseRejectsNegativeTotalTimeout(t *testing.T) {
+	_, err := Parse([]byte(`{"routes":[{"name":"api","resilience":{"total_timeout":"-1s"},"backends":[{"url":"http://backend"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "total_timeout cannot be negative") {
+		t.Fatalf("negative total timeout error = %v", err)
+	}
+}
+
 func TestParseAndSortLongestPrefixFirst(t *testing.T) {
 	raw := []byte(`{
 	  "routes": [

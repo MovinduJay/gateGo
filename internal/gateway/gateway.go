@@ -382,6 +382,12 @@ func retryAfterSeconds(delay time.Duration) int {
 }
 
 func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request, route *Route, started time.Time) {
+	requestContext := r.Context()
+	if totalTimeout := route.Config.Resilience.TotalTimeout.Std(); totalTimeout > 0 {
+		var cancel context.CancelFunc
+		requestContext, cancel = context.WithTimeout(requestContext, totalTimeout)
+		defer cancel()
+	}
 	set := g.routes.Load()
 	maxBodyBytes := route.Config.MaxRequestBodyBytes
 	if maxBodyBytes == 0 {
@@ -432,7 +438,7 @@ attempts:
 			break
 		}
 		backendName := backend.URL.Host
-		ctx, cancel := context.WithTimeout(r.Context(), route.Config.Timeout.Std())
+		ctx, cancel := context.WithTimeout(requestContext, route.Config.Timeout.Std())
 		upstreamReq, reqErr := buildUpstreamRequest(ctx, r, backend.URL.String(), body, route.Config.PathPrefix, route.Config.StripPathPrefix)
 		if reqErr != nil {
 			backend.Release()
@@ -460,8 +466,12 @@ attempts:
 			lastErr = reqErr
 			if attempt+1 < maxAttempts {
 				g.metrics.IncRetry(route.Config.Name)
-				if !sleepBackoff(r.Context(), attempt) {
-					return
+				if !sleepBackoff(requestContext, attempt) {
+					if r.Context().Err() != nil {
+						return
+					}
+					lastErr = requestContext.Err()
+					break
 				}
 				continue
 			}
@@ -480,8 +490,12 @@ attempts:
 			g.metrics.IncUpstreamError(route.Config.Name, backendName)
 			g.metrics.IncRetry(route.Config.Name)
 			lastErr = fmt.Errorf("upstream returned %d", resp.StatusCode)
-			if !sleepBackoff(r.Context(), attempt) {
-				return
+			if !sleepBackoff(requestContext, attempt) {
+				if r.Context().Err() != nil {
+					return
+				}
+				lastErr = requestContext.Err()
+				break
 			}
 			continue
 		}

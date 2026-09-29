@@ -235,6 +235,28 @@ func TestExhaustedUpstreamTimeoutReturnsGatewayTimeout(t *testing.T) {
 	}
 }
 
+func TestTotalRequestDeadlineCapsRetriesAndBackoff(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer slow.Close()
+	raw := fmt.Sprintf(`{"routes":[{"name":"api","path_prefix":"/api","retries":3,"timeout":"500ms","resilience":{"total_timeout":"50ms"},"backends":[{"url":%q}]}]}`, slow.URL)
+	cfg, err := config.Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://gateway/api/slow", nil))
+	if rr.Code != http.StatusGatewayTimeout || time.Since(started) > 250*time.Millisecond {
+		t.Fatalf("total deadline response=%d duration=%s body=%s", rr.Code, time.Since(started), rr.Body.String())
+	}
+}
+
 func TestConnectionFailureReturnsBadGateway(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

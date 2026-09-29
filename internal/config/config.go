@@ -124,6 +124,7 @@ type ResilienceConfig struct {
 	MaxConcurrentRetries    int      `json:"max_concurrent_retries"`
 	MaxConcurrentRequests   int      `json:"max_concurrent_requests"`
 	RetryStatuses           []int    `json:"retry_statuses"`
+	TotalTimeout            Duration `json:"total_timeout"`
 }
 type RateLimitConfig struct {
 	RequestsPerSecond float64 `json:"requests_per_second"`
@@ -366,6 +367,9 @@ func validate(cfg *Config) error {
 		}
 		if r.Resilience.CircuitFailureThreshold < 1 || r.Resilience.CircuitCooldown.Std() <= 0 || r.Resilience.MaxConcurrentPerBackend < 1 || r.Resilience.MaxConcurrentRetries < 1 || r.Resilience.MaxConcurrentRequests < 1 {
 			return fmt.Errorf("route %q resilience values must be positive", r.Name)
+		}
+		if r.Resilience.TotalTimeout.Std() < 0 {
+			return fmt.Errorf("route %q resilience total_timeout cannot be negative", r.Name)
 		}
 		retryStatuses := map[int]struct{}{}
 		for _, status := range r.Resilience.RetryStatuses {
