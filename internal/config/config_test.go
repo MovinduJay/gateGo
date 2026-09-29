@@ -94,7 +94,7 @@ func TestShadowPolicyDefaultsAndValidation(t *testing.T) {
 		t.Fatalf("unexpected shadow defaults: %+v", shadow)
 	}
 	_, err = Parse([]byte(`{"routes":[{"name":"api","shadow":{"url":"ftp://candidate","sample_percent":101},"backends":[{"url":"http://primary"}]}]}`))
-	if err == nil || !strings.Contains(err.Error(), "shadow URL must be http(s)") {
+	if err == nil || !strings.Contains(err.Error(), "scheme must be http or https") {
 		t.Fatalf("invalid shadow error = %v", err)
 	}
 }
@@ -139,6 +139,36 @@ func TestRetryStatusDefaultsAndValidation(t *testing.T) {
 	_, err = Parse([]byte(`{"routes":[{"name":"api","resilience":{"retry_statuses":[200]},"backends":[{"url":"http://a"}]}]}`))
 	if err == nil || !strings.Contains(err.Error(), "must be between 400 and 599") {
 		t.Fatalf("invalid retry status error = %v", err)
+	}
+}
+
+func TestParseRejectsUnsafeUpstreamURLs(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{"missing host", "http://", "host is required"},
+		{"wrong scheme", "ftp://backend", "scheme must be http or https"},
+		{"embedded credentials", "https://user:secret@backend", "embedded credentials"},
+		{"query parameters", "https://backend?token=secret", "query parameters and fragments"},
+		{"fragment", "https://backend/#fragment", "query parameters and fragments"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := fmt.Sprintf(`{"routes":[{"name":"api","backends":[{"url":%q}]}]}`, tt.url)
+			_, err := Parse([]byte(raw))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Parse() error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseRejectsRelativeHealthPath(t *testing.T) {
+	_, err := Parse([]byte(`{"routes":[{"name":"api","backends":[{"url":"http://backend","health_path":"healthz"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "health_path must be absolute") {
+		t.Fatalf("relative health path error = %v", err)
 	}
 }
 

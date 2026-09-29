@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -377,8 +378,8 @@ func validate(cfg *Config) error {
 			retryStatuses[status] = struct{}{}
 		}
 		if r.Shadow.URL != "" {
-			if !strings.HasPrefix(r.Shadow.URL, "http://") && !strings.HasPrefix(r.Shadow.URL, "https://") {
-				return fmt.Errorf("route %q shadow URL must be http(s)", r.Name)
+			if err := validateUpstreamURL(r.Shadow.URL); err != nil {
+				return fmt.Errorf("route %q shadow URL: %w", r.Name, err)
 			}
 			if r.Shadow.SamplePercent <= 0 || r.Shadow.SamplePercent > 100 {
 				return fmt.Errorf("route %q shadow sample_percent must be greater than 0 and at most 100", r.Name)
@@ -389,8 +390,11 @@ func validate(cfg *Config) error {
 		}
 		backends := map[string]struct{}{}
 		for _, b := range r.Backends {
-			if !strings.HasPrefix(b.URL, "http://") && !strings.HasPrefix(b.URL, "https://") {
-				return fmt.Errorf("route %q backend must be http(s)", r.Name)
+			if err := validateUpstreamURL(b.URL); err != nil {
+				return fmt.Errorf("route %q backend %q: %w", r.Name, b.URL, err)
+			}
+			if !strings.HasPrefix(b.HealthPath, "/") {
+				return fmt.Errorf("route %q backend %q health_path must be absolute", r.Name, b.URL)
 			}
 			normalizedURL := strings.TrimSuffix(b.URL, "/")
 			if _, ok := backends[normalizedURL]; ok {
@@ -398,6 +402,26 @@ func validate(cfg *Config) error {
 			}
 			backends[normalizedURL] = struct{}{}
 		}
+	}
+	return nil
+}
+
+func validateUpstreamURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return errors.New("scheme must be http or https")
+	}
+	if parsed.Host == "" {
+		return errors.New("host is required")
+	}
+	if parsed.User != nil {
+		return errors.New("embedded credentials are not allowed")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("query parameters and fragments are not allowed")
 	}
 	return nil
 }
