@@ -3,9 +3,11 @@ package gateway
 import (
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/example/gatego/internal/config"
+	"github.com/example/gatego/internal/eventlog"
 )
 
 func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
@@ -38,6 +40,27 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 		}
 		g.respondJSON(w, status, map[string]any{"ready": ready, "config_revision": set.Revision, "routes": routes})
 		return true
+	case "/admin/events":
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "GET required"})
+			return true
+		}
+		if !g.requireAdmin(w, r) {
+			return true
+		}
+		limit := 50
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed < 1 || parsed > 200 {
+				g.respondJSON(w, http.StatusBadRequest, map[string]any{"error": "limit must be between 1 and 200"})
+				return true
+			}
+			limit = parsed
+		}
+		events := g.events.List(eventlog.Filter{Type: r.URL.Query().Get("type"), Route: r.URL.Query().Get("route"), Limit: limit})
+		g.respondJSON(w, http.StatusOK, map[string]any{"events": events})
+		return true
 	case "/admin/maintenance":
 		if r.Method != http.MethodGet && r.Method != http.MethodPost && r.Method != http.MethodDelete {
 			w.Header().Set("Allow", "GET, POST, DELETE")
@@ -49,9 +72,11 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 		}
 		if r.Method == http.MethodPost {
 			g.maintenance.Store(true)
+			g.events.Add(eventlog.Event{Type: "maintenance", Details: map[string]any{"enabled": true, "peer": r.RemoteAddr}})
 			g.logger.Warn("maintenance mode enabled", "peer", r.RemoteAddr)
 		} else if r.Method == http.MethodDelete {
 			g.maintenance.Store(false)
+			g.events.Add(eventlog.Event{Type: "maintenance", Details: map[string]any{"enabled": false, "peer": r.RemoteAddr}})
 			g.logger.Info("maintenance mode disabled", "peer", r.RemoteAddr)
 		}
 		g.respondJSON(w, http.StatusOK, map[string]any{"maintenance": g.maintenance.Load()})
@@ -184,6 +209,7 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 			status = "draining"
 		}
 		g.logger.Info("backend administrative state changed", "route", routeName, "backend", backendName, "status", status)
+		g.events.Add(eventlog.Event{Type: "backend_state", Route: routeName, Backend: backendName, Details: map[string]any{"status": status, "peer": r.RemoteAddr}})
 		g.respondJSON(w, http.StatusOK, map[string]any{"status": status})
 		return true
 	case "/admin/circuits/reset":
@@ -219,6 +245,7 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 		g.logger.Info("circuit breakers manually reset", "route", routeName, "backend", backendName, "count", reset)
+		g.events.Add(eventlog.Event{Type: "circuit_reset", Route: routeName, Backend: backendName, Details: map[string]any{"count": reset, "peer": r.RemoteAddr}})
 		g.respondJSON(w, http.StatusOK, map[string]any{"status": "reset", "count": reset})
 		return true
 	}

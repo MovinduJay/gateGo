@@ -228,6 +228,42 @@ func TestMaintenanceModeWithdrawsReadinessAndRejectsTraffic(t *testing.T) {
 	}
 }
 
+func TestAdminEventsAreAuthenticatedFilteredAndBounded(t *testing.T) {
+	cfg, err := config.Parse([]byte(`{"routes":[{"name":"api","backends":[{"url":"http://backend"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	enable := httptest.NewRequest(http.MethodPost, "http://gateway/admin/maintenance", nil)
+	enable.Header.Set("X-Admin-Key", "admin")
+	gw.ServeHTTP(httptest.NewRecorder(), enable)
+
+	unauthorized := httptest.NewRecorder()
+	gw.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "http://gateway/admin/events", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized events status = %d", unauthorized.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/admin/events?type=maintenance&limit=1", nil)
+	req.Header.Set("X-Admin-Key", "admin")
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"type":"maintenance"`) || !strings.Contains(rr.Body.String(), `"enabled":true`) || strings.Contains(rr.Body.String(), `"type":"gateway_started"`) {
+		t.Fatalf("filtered events response = %d %s", rr.Code, rr.Body.String())
+	}
+
+	invalid := httptest.NewRequest(http.MethodGet, "http://gateway/admin/events?limit=201", nil)
+	invalid.Header.Set("X-Admin-Key", "admin")
+	rr = httptest.NewRecorder()
+	gw.ServeHTTP(rr, invalid)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("invalid limit status = %d", rr.Code)
+	}
+}
+
 func TestRouteAccessPolicyDenyOverridesAllow(t *testing.T) {
 	called := false
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

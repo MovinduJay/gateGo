@@ -26,6 +26,7 @@ import (
 	"github.com/example/gatego/internal/auth"
 	"github.com/example/gatego/internal/balancer"
 	"github.com/example/gatego/internal/config"
+	"github.com/example/gatego/internal/eventlog"
 	"github.com/example/gatego/internal/health"
 	"github.com/example/gatego/internal/metrics"
 	"github.com/example/gatego/internal/observability"
@@ -66,6 +67,7 @@ type Gateway struct {
 	redisRetryAt   atomic.Int64
 	redisWarnAt    atomic.Int64
 	maintenance    atomic.Bool
+	events         *eventlog.Log
 }
 
 func New(configPath string, cfg *config.Config, jwtSecret, adminKey string, redisLimiter *ratelimit.RedisLimiter, m *metrics.Metrics, logger *slog.Logger) (*Gateway, error) {
@@ -78,6 +80,7 @@ func New(configPath string, cfg *config.Config, jwtSecret, adminKey string, redi
 		logger:         logger,
 		adminKey:       adminKey,
 		trustForwarded: strings.EqualFold(os.Getenv("GATEGO_TRUST_FORWARDED_HEADERS"), "true"),
+		events:         eventlog.New(256),
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = 256
@@ -89,6 +92,7 @@ func New(configPath string, cfg *config.Config, jwtSecret, adminKey string, redi
 		return nil, err
 	}
 	g.routes.Store(set)
+	g.events.Add(eventlog.Event{Type: "gateway_started", Details: map[string]any{"config_revision": set.Revision}})
 	g.metrics.SetConfigRevision(set.Revision)
 	g.initializeCircuitMetrics(set)
 	return g, nil
@@ -104,7 +108,9 @@ func (g *Gateway) initializeCircuitMetrics(set *routeSet) {
 }
 
 func (g *Gateway) recordCircuitState(route string, backend *balancer.Backend) {
-	g.metrics.SetCircuitState(route, backend.URL.Host, backend.Breaker.State().String())
+	state := backend.Breaker.State().String()
+	g.metrics.SetCircuitState(route, backend.URL.Host, state)
+	g.events.Add(eventlog.Event{Type: "circuit_state", Route: route, Backend: backend.URL.Host, Details: map[string]any{"state": state}})
 }
 
 func buildRouteSet(cfg *config.Config) (*routeSet, error) {
@@ -148,17 +154,20 @@ func (g *Gateway) Reload() error {
 	cfg, err := config.Load(g.configPath)
 	if err != nil {
 		g.metrics.IncConfigReload("failure")
+		g.events.Add(eventlog.Event{Type: "config_reload", Details: map[string]any{"result": "failure", "error": err.Error()}})
 		return err
 	}
 	set, err := buildRouteSet(cfg)
 	if err != nil {
 		g.metrics.IncConfigReload("failure")
+		g.events.Add(eventlog.Event{Type: "config_reload", Details: map[string]any{"result": "failure", "error": err.Error()}})
 		return err
 	}
 	preserveDrainState(g.routes.Load(), set)
 	g.routes.Store(set)
 	g.metrics.SetConfigRevision(set.Revision)
 	g.metrics.IncConfigReload("success")
+	g.events.Add(eventlog.Event{Type: "config_reload", Details: map[string]any{"result": "success", "config_revision": set.Revision}})
 	g.initializeCircuitMetrics(set)
 	if info, statErr := os.Stat(g.configPath); statErr == nil {
 		g.configModTime = info.ModTime()
@@ -355,6 +364,7 @@ func (g *Gateway) allowRate(ctx context.Context, route *Route, identity string) 
 			}
 			g.redisRetryAt.Store(time.Now().Add(time.Second).UnixNano())
 			g.metrics.IncRateLimitFallback()
+			g.events.Add(eventlog.Event{Type: "rate_limit_fallback", Route: route.Config.Name, Details: map[string]any{"error": err.Error()}})
 			if now >= g.redisWarnAt.Load() {
 				g.redisWarnAt.Store(time.Now().Add(time.Second).UnixNano())
 				g.logger.Warn("redis rate limiter unavailable; using local fallback", "error", err)
