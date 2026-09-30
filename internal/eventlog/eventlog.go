@@ -18,6 +18,7 @@ type Filter struct {
 	Type  string
 	Route string
 	Limit int
+	After uint64
 }
 
 type Log struct {
@@ -62,6 +63,9 @@ func (l *Log) List(filter Filter) []Event {
 	for offset := 0; offset < l.count && len(result) < limit; offset++ {
 		index := (l.next - 1 - offset + len(l.events)) % len(l.events)
 		event := l.events[index]
+		if event.Sequence <= filter.After {
+			continue
+		}
 		if filter.Type != "" && event.Type != filter.Type {
 			continue
 		}
@@ -72,6 +76,12 @@ func (l *Log) List(filter Filter) []Event {
 		result = append(result, event)
 	}
 	return result
+}
+
+func (l *Log) LatestSequence() uint64 {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.sequence
 }
 
 func cloneDetails(details map[string]any) map[string]any {

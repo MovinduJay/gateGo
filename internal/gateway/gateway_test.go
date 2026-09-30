@@ -262,6 +262,13 @@ func TestAdminEventsAreAuthenticatedFilteredAndBounded(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("invalid limit status = %d", rr.Code)
 	}
+	invalid = httptest.NewRequest(http.MethodGet, "http://gateway/admin/events?after=invalid", nil)
+	invalid.Header.Set("X-Admin-Key", "admin")
+	rr = httptest.NewRecorder()
+	gw.ServeHTTP(rr, invalid)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("invalid cursor status = %d", rr.Code)
+	}
 }
 
 func TestRouteAccessPolicyDenyOverridesAllow(t *testing.T) {

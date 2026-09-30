@@ -24,4 +24,10 @@ func TestLogIsBoundedOrderedAndFilterable(t *testing.T) {
 	if got := log.List(Filter{Limit: 1})[0].Details["result"]; got != "success" {
 		t.Fatalf("caller mutated stored details: %v", got)
 	}
+	if events := log.List(Filter{After: 2}); len(events) != 1 || events[0].Sequence != 3 {
+		t.Fatalf("unexpected cursor result: %+v", events)
+	}
+	if log.LatestSequence() != 3 {
+		t.Fatalf("latest sequence = %d", log.LatestSequence())
+	}
 }

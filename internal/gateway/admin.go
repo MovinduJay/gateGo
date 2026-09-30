@@ -58,8 +58,17 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 			}
 			limit = parsed
 		}
-		events := g.events.List(eventlog.Filter{Type: r.URL.Query().Get("type"), Route: r.URL.Query().Get("route"), Limit: limit})
-		g.respondJSON(w, http.StatusOK, map[string]any{"events": events})
+		var after uint64
+		if raw := r.URL.Query().Get("after"); raw != "" {
+			parsed, err := strconv.ParseUint(raw, 10, 64)
+			if err != nil {
+				g.respondJSON(w, http.StatusBadRequest, map[string]any{"error": "after must be an unsigned event sequence"})
+				return true
+			}
+			after = parsed
+		}
+		events := g.events.List(eventlog.Filter{Type: r.URL.Query().Get("type"), Route: r.URL.Query().Get("route"), Limit: limit, After: after})
+		g.respondJSON(w, http.StatusOK, map[string]any{"events": events, "latest_sequence": g.events.LatestSequence()})
 		return true
 	case "/admin/maintenance":
 		if r.Method != http.MethodGet && r.Method != http.MethodPost && r.Method != http.MethodDelete {

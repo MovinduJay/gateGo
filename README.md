@@ -157,7 +157,7 @@ Invoke-WebRequest -Method Post -Headers @{"X-Admin-Key"="dev-admin-key"} "http:/
 
 Authenticated `GET /admin/readiness` adds per-route counts for total, healthy, eligible, open-circuit, and draining backends. This keeps the Kubernetes probe response small while giving operators a concrete reason for an unhealthy gateway.
 
-Authenticated `GET /admin/events` returns a newest-first operational journal with monotonic sequence IDs. The fixed-size journal records configuration reloads, circuit transitions, maintenance changes, backend drain operations, circuit resets, and Redis rate-limit fallbacks; `type`, `route`, and `limit` query filters support incident investigation without unbounded memory growth.
+Authenticated `GET /admin/events` returns a newest-first operational journal with monotonic sequence IDs. The fixed-size journal records configuration reloads, circuit transitions, maintenance changes, backend drain operations, circuit resets, and Redis rate-limit fallbacks; `type`, `route`, `limit`, and `after` query filters support incident investigation and cursor-based polling without unbounded memory growth.
 
 Backends can be drained before maintenance without interrupting requests already in flight. `POST` begins draining and `DELETE` makes the backend eligible for new traffic again:
 
