@@ -2,6 +2,7 @@ package balancer
 
 import (
 	"errors"
+	"hash/fnv"
 	"net/url"
 	"sync"
 	"sync/atomic"
@@ -101,13 +102,57 @@ func NewWithStrategy(configs []config.BackendConfig, resilience config.Resilienc
 }
 
 func (w *WeightedRoundRobin) Pick() (*Backend, error) {
+	return w.PickForKey("")
+}
+
+func (w *WeightedRoundRobin) PickForKey(key string) (*Backend, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	if w.strategy == "least_connections" {
 		return w.pickLeastConnections()
 	}
+	if w.strategy == "consistent_hash" && key != "" {
+		return w.pickConsistentHash(key)
+	}
 	return w.pickWeighted()
+}
+
+func (w *WeightedRoundRobin) pickConsistentHash(key string) (*Backend, error) {
+	var selected *Backend
+	var highest uint64
+	busy := false
+	for _, backend := range w.backends {
+		if backend.Draining.Load() || !backend.Healthy.Load() || !backend.Breaker.Available() {
+			continue
+		}
+		if backend.InFlight() == backend.Capacity() {
+			busy = true
+			continue
+		}
+		hash := fnv.New64a()
+		_, _ = hash.Write([]byte(key))
+		_, _ = hash.Write([]byte{0})
+		_, _ = hash.Write([]byte(backend.URL.String()))
+		score := hash.Sum64()
+		if selected == nil || score > highest {
+			selected = backend
+			highest = score
+		}
+	}
+	if selected == nil {
+		if busy {
+			return nil, ErrAllBackendsBusy
+		}
+		return nil, ErrNoBackendAvailable
+	}
+	if !selected.Breaker.Allow() {
+		return nil, errors.New("selected backend circuit became unavailable")
+	}
+	if !selected.TryAcquire() {
+		return nil, errors.New("selected backend bulkhead is full")
+	}
+	return selected, nil
 }
 
 func (w *WeightedRoundRobin) pickWeighted() (*Backend, error) {

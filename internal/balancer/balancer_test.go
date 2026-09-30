@@ -106,3 +106,24 @@ func TestLeastConnectionsPrefersLessLoadedBackend(t *testing.T) {
 		t.Fatalf("least-connections selected loaded backend %s", first.URL)
 	}
 }
+
+func TestConsistentHashKeepsAKeyOnTheSameBackend(t *testing.T) {
+	resilience := config.ResilienceConfig{CircuitFailureThreshold: 20, CircuitCooldown: config.Duration(time.Second), MaxConcurrentPerBackend: 4, MaxConcurrentRetries: 1}
+	lb, err := NewWithStrategy([]config.BackendConfig{{URL: "http://a", Weight: 1}, {URL: "http://b", Weight: 1}, {URL: "http://c", Weight: 1}}, resilience, "consistent_hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selected string
+	for i := 0; i < 20; i++ {
+		backend, err := lb.PickForKey("customer-123")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if selected == "" {
+			selected = backend.URL.Host
+		} else if backend.URL.Host != selected {
+			t.Fatalf("key moved from %s to %s", selected, backend.URL.Host)
+		}
+		backend.Release()
+	}
+}

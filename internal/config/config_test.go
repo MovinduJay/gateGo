@@ -126,6 +126,10 @@ func TestLoadBalancingStrategyValidation(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unsupported load_balancing") {
 		t.Fatalf("unsupported strategy error = %v", err)
 	}
+	_, err = Parse([]byte(`{"routes":[{"name":"api","load_balancing":"consistent_hash","backends":[{"url":"http://a"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "requires hash_key_header") {
+		t.Fatalf("missing hash key error = %v", err)
+	}
 }
 
 func TestRetryStatusDefaultsAndValidation(t *testing.T) {

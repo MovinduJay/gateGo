@@ -438,7 +438,11 @@ attempts:
 				break attempts
 			}
 		}
-		backend, pickErr := route.Balancer.Pick()
+		selectionKey := r.Header.Get(route.Config.HashKeyHeader)
+		if attempt > 0 && selectionKey != "" {
+			selectionKey += "#retry=" + strconv.Itoa(attempt)
+		}
+		backend, pickErr := route.Balancer.PickForKey(selectionKey)
 		if pickErr != nil {
 			releaseRetry()
 			lastErr = pickErr
@@ -540,7 +544,7 @@ attempts:
 }
 
 func (g *Gateway) serveWebSocket(w http.ResponseWriter, r *http.Request, route *Route, started time.Time) {
-	backend, err := route.Balancer.Pick()
+	backend, err := route.Balancer.PickForKey(r.Header.Get(route.Config.HashKeyHeader))
 	if err != nil {
 		g.record(route.Config.Name, "", http.StatusBadGateway, started)
 		g.respondJSON(w, http.StatusBadGateway, map[string]any{"error": "upstream unavailable"})

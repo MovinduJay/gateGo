@@ -53,6 +53,7 @@ On Windows without `make`, run:
 | Two gateway replicas with Redis | Demonstrates horizontal scaling while enforcing one global rate-limit bucket | Redis failure falls back to locally consistent limits |
 | Weighted round robin | Predictable traffic allocation that is easy to inspect and test | It does not automatically account for backend latency |
 | Optional least-connections routing | Sends work to the currently least-loaded eligible backend for uneven request durations | Backend weights apply only to weighted round robin |
+| Optional consistent hashing | Preserves request affinity and cache locality using rendezvous hashing with minimal remapping | Clients must supply a stable configured key header |
 | Health checks plus circuit breakers | Health checks detect readiness proactively; circuits react immediately to real request failures | Two independent state signals must be understood operationally |
 | Retry budgets and backend bulkheads | Prevent one failed replica from amplifying load into healthy replicas | Overload is rejected deliberately instead of queued indefinitely |
 | Atomic JSON reloads | Invalid configuration never replaces the last-known-good route set | This is not a distributed control plane |

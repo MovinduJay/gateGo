@@ -67,6 +67,7 @@ type RouteConfig struct {
 	PathPrefix          string           `json:"path_prefix"`
 	StripPathPrefix     bool             `json:"strip_path_prefix"`
 	LoadBalancing       string           `json:"load_balancing"`
+	HashKeyHeader       string           `json:"hash_key_header"`
 	Methods             []string         `json:"methods"`
 	AuthRequired        bool             `json:"auth_required"`
 	Auth                AuthConfig       `json:"auth"`
@@ -300,8 +301,11 @@ func validate(cfg *Config) error {
 		if !strings.HasPrefix(r.PathPrefix, "/") {
 			return fmt.Errorf("route %q path_prefix must start with /", r.Name)
 		}
-		if r.LoadBalancing != "weighted_round_robin" && r.LoadBalancing != "least_connections" {
+		if r.LoadBalancing != "weighted_round_robin" && r.LoadBalancing != "least_connections" && r.LoadBalancing != "consistent_hash" {
 			return fmt.Errorf("route %q has unsupported load_balancing strategy %q", r.Name, r.LoadBalancing)
+		}
+		if r.LoadBalancing == "consistent_hash" && strings.TrimSpace(r.HashKeyHeader) == "" {
+			return fmt.Errorf("route %q consistent_hash requires hash_key_header", r.Name)
 		}
 		path := strings.TrimSuffix(r.PathPrefix, "/")
 		if path == "" {
