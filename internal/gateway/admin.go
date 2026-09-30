@@ -178,6 +178,47 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 		}
 		g.respondJSON(w, http.StatusOK, states)
 		return true
+	case "/admin/routes":
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "GET required"})
+			return true
+		}
+		if !g.requireAdmin(w, r) {
+			return true
+		}
+		type routeState struct {
+			Name            string  `json:"name"`
+			PathPrefix      string  `json:"path_prefix"`
+			LoadBalancing   string  `json:"load_balancing"`
+			InFlight        int     `json:"in_flight"`
+			RequestCapacity int     `json:"request_capacity"`
+			RetriesInFlight int     `json:"retries_in_flight"`
+			RetryCapacity   int     `json:"retry_capacity"`
+			RatePerSecond   float64 `json:"rate_per_second"`
+			RateBurst       int     `json:"rate_burst"`
+			TotalTimeoutMS  int64   `json:"total_timeout_ms"`
+			ShadowInFlight  int     `json:"shadow_in_flight"`
+			ShadowCapacity  int     `json:"shadow_capacity"`
+		}
+		set := g.routes.Load()
+		states := make([]routeState, 0, len(set.Routes))
+		for _, route := range set.Routes {
+			state := routeState{
+				Name: route.Config.Name, PathPrefix: route.Config.PathPrefix, LoadBalancing: route.Config.LoadBalancing,
+				InFlight: len(route.requestSlots), RequestCapacity: cap(route.requestSlots),
+				RetriesInFlight: len(route.retrySlots), RetryCapacity: cap(route.retrySlots),
+				RatePerSecond: route.Config.RateLimit.RequestsPerSecond, RateBurst: route.Config.RateLimit.Burst,
+				TotalTimeoutMS: route.Config.Resilience.TotalTimeout.Std().Milliseconds(),
+			}
+			if route.shadowSlots != nil {
+				state.ShadowInFlight = len(route.shadowSlots)
+				state.ShadowCapacity = cap(route.shadowSlots)
+			}
+			states = append(states, state)
+		}
+		g.respondJSON(w, http.StatusOK, states)
+		return true
 	case "/admin/backends/drain":
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 			g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "POST or DELETE required"})

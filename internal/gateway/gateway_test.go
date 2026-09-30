@@ -271,6 +271,29 @@ func TestAdminEventsAreAuthenticatedFilteredAndBounded(t *testing.T) {
 	}
 }
 
+func TestAdminRoutesReportsRuntimeCapacity(t *testing.T) {
+	cfg, err := config.Parse([]byte(`{"routes":[{"name":"api","path_prefix":"/api","load_balancing":"least_connections","resilience":{"max_concurrent_requests":12,"max_concurrent_retries":3,"total_timeout":"2s"},"shadow":{"url":"http://candidate","max_concurrent":2},"backends":[{"url":"http://backend"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/admin/routes", nil)
+	req.Header.Set("X-Admin-Key", "admin")
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("routes status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	for _, want := range []string{`"name":"api"`, `"load_balancing":"least_connections"`, `"request_capacity":12`, `"retry_capacity":3`, `"total_timeout_ms":2000`, `"shadow_capacity":2`} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Fatalf("route state missing %s: %s", want, rr.Body.String())
+		}
+	}
+}
+
 func TestRouteAccessPolicyDenyOverridesAllow(t *testing.T) {
 	called := false
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

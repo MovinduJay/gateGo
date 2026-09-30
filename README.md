@@ -147,6 +147,8 @@ The effective configuration, including defaults applied by GateGo, is available 
 
 Authenticated `GET /admin/backends` reports health and circuit state for every route/backend pair.
 
+Authenticated `GET /admin/routes` reports live route-level admission and retry occupancy, configured capacities, load-balancing strategy, rate limit, total timeout, and shadow-traffic bulkhead usage.
+
 Operators can manually clear circuit state after an emergency repair. The route is required; `backend` may be either the backend URL or host and can be omitted to reset every backend on the route:
 
 ```powershell
