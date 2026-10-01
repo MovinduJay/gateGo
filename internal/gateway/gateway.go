@@ -493,6 +493,7 @@ attempts:
 		}
 
 		if retryableStatus(route.Config.Resilience.RetryStatuses, resp.StatusCode) && attempt+1 < maxAttempts {
+			retryAfter := resp.Header.Get("Retry-After")
 			io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 			resp.Body.Close()
 			backend.Release()
@@ -504,7 +505,7 @@ attempts:
 			g.metrics.IncUpstreamError(route.Config.Name, backendName)
 			g.metrics.IncRetry(route.Config.Name)
 			lastErr = fmt.Errorf("upstream returned %d", resp.StatusCode)
-			if !sleepBackoff(requestContext, attempt) {
+			if !sleepRetry(requestContext, attempt, retryAfter, route.Config.Resilience.MaxRetryAfter.Std()) {
 				if r.Context().Err() != nil {
 					return
 				}
@@ -738,9 +739,38 @@ func upstreamFailureResponse(err error) (int, string) {
 }
 
 func sleepBackoff(ctx context.Context, attempt int) bool {
+	return sleepDelay(ctx, jitteredBackoff(attempt))
+}
+
+func sleepRetry(ctx context.Context, attempt int, retryAfter string, maximum time.Duration) bool {
+	delay := jitteredBackoff(attempt)
+	if upstreamDelay := parseRetryAfter(retryAfter, time.Now()); upstreamDelay > delay {
+		delay = upstreamDelay
+	}
+	if delay > maximum {
+		delay = maximum
+	}
+	return sleepDelay(ctx, delay)
+}
+
+func jitteredBackoff(attempt int) time.Duration {
 	base := 50 * time.Millisecond * time.Duration(1<<min(attempt, 3))
-	jitter := time.Duration(mathrand.Int63n(int64(base/2) + 1))
-	t := time.NewTimer(base + jitter)
+	return base + time.Duration(mathrand.Int63n(int64(base/2)+1))
+}
+
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if date, err := http.ParseTime(value); err == nil && date.After(now) {
+		return date.Sub(now)
+	}
+	return 0
+}
+
+func sleepDelay(ctx context.Context, delay time.Duration) bool {
+	t := time.NewTimer(delay)
 	defer t.Stop()
 	select {
 	case <-ctx.Done():

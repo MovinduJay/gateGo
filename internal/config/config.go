@@ -126,6 +126,7 @@ type ResilienceConfig struct {
 	MaxConcurrentRequests   int      `json:"max_concurrent_requests"`
 	RetryStatuses           []int    `json:"retry_statuses"`
 	TotalTimeout            Duration `json:"total_timeout"`
+	MaxRetryAfter           Duration `json:"max_retry_after"`
 }
 type RateLimitConfig struct {
 	RequestsPerSecond float64 `json:"requests_per_second"`
@@ -257,6 +258,9 @@ func applyDefaults(cfg *Config) {
 		if len(r.Resilience.RetryStatuses) == 0 {
 			r.Resilience.RetryStatuses = []int{500, 502, 503, 504}
 		}
+		if r.Resilience.MaxRetryAfter == 0 {
+			r.Resilience.MaxRetryAfter = Duration(2 * time.Second)
+		}
 		if r.Shadow.URL != "" {
 			if r.Shadow.SamplePercent == 0 {
 				r.Shadow.SamplePercent = 100
@@ -374,6 +378,9 @@ func validate(cfg *Config) error {
 		}
 		if r.Resilience.TotalTimeout.Std() < 0 {
 			return fmt.Errorf("route %q resilience total_timeout cannot be negative", r.Name)
+		}
+		if r.Resilience.MaxRetryAfter.Std() <= 0 {
+			return fmt.Errorf("route %q resilience max_retry_after must be positive", r.Name)
 		}
 		retryStatuses := map[int]struct{}{}
 		for _, status := range r.Resilience.RetryStatuses {

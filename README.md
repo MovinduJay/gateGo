@@ -66,6 +66,8 @@ Retries are contained by per-route concurrency budgets and each backend has an i
 
 Retry classification is configurable through `resilience.retry_statuses`; the default is `500`, `502`, `503`, and `504`. Only error status codes can be configured, and non-idempotent requests still require an `Idempotency-Key` regardless of status policy.
 
+Retryable upstream responses may provide `Retry-After` as delta-seconds or an HTTP date. GateGo honors that delay but caps it with `resilience.max_retry_after` (default `2s`) so an upstream cannot pin retry capacity indefinitely.
+
 Routes can set `resilience.total_timeout` to cap the complete request across every attempt and jittered backoff. This prevents a per-attempt timeout from multiplying into an unexpectedly long client wait; exhausting the total budget returns `504` and remains distinct from client cancellation.
 
 Routes may also define `access.allow_cidrs` and `access.deny_cidrs`. Deny rules take precedence, and forwarded client addresses are only considered when `GATEGO_TRUST_FORWARDED_HEADERS=true`; otherwise GateGo uses the direct peer address to prevent header spoofing.

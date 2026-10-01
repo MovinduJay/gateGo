@@ -95,6 +95,32 @@ func TestConfiguredRetryStatusCanFailOver(t *testing.T) {
 	}
 }
 
+func TestRetryAfterIsHonoredAndCapped(t *testing.T) {
+	limited := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "10")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer limited.Close()
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer healthy.Close()
+	raw := fmt.Sprintf(`{"routes":[{"name":"api","path_prefix":"/api","retries":1,"resilience":{"retry_statuses":[429],"max_retry_after":"20ms"},"backends":[{"url":%q},{"url":%q}]}]}`, limited.URL, healthy.URL)
+	cfg, err := config.Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://gateway/api/test", nil))
+	elapsed := time.Since(started)
+	if rr.Code != http.StatusOK || elapsed < 20*time.Millisecond || elapsed > 250*time.Millisecond {
+		t.Fatalf("retry-after response=%d elapsed=%s", rr.Code, elapsed)
+	}
+}
+
 func TestConcurrentFailureIsContainedToBadBackend(t *testing.T) {
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
 	defer bad.Close()
