@@ -233,8 +233,17 @@ func (g *Gateway) WatchConfig(ctx context.Context, interval time.Duration) {
 
 func (g *Gateway) HealthChecker() *health.Checker {
 	set := g.routes.Load()
-	return health.New(g.healthTargets, set.Config.Health.Interval.Std(), set.Config.Health.Timeout.Std(),
+	checker := health.New(g.healthTargets, set.Config.Health.Interval.Std(), set.Config.Health.Timeout.Std(),
 		set.Config.Health.FailureThreshold, set.Config.Health.SuccessThreshold, set.Config.Health.MaxConcurrent, g.metrics)
+	checker.SetTransitionHandler(func(transition health.Transition) {
+		state := "unhealthy"
+		if transition.Healthy {
+			state = "healthy"
+		}
+		g.metrics.IncHealthTransition(transition.Route, transition.Backend, state)
+		g.events.Add(eventlog.Event{Type: "backend_health", Route: transition.Route, Backend: transition.Backend, Details: map[string]any{"state": state}})
+	})
+	return checker
 }
 
 func (g *Gateway) healthTargets() []health.Target {

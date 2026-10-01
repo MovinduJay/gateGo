@@ -17,6 +17,12 @@ type Target struct {
 
 type Provider func() []Target
 
+type Transition struct {
+	Route   string
+	Backend string
+	Healthy bool
+}
+
 type Checker struct {
 	client           *http.Client
 	provider         Provider
@@ -25,6 +31,11 @@ type Checker struct {
 	successThreshold int
 	metrics          *metrics.Metrics
 	sem              chan struct{}
+	onTransition     func(Transition)
+}
+
+func (c *Checker) SetTransitionHandler(handler func(Transition)) {
+	c.onTransition = handler
 }
 
 func New(provider Provider, interval, timeout time.Duration, failureThreshold, successThreshold, maxConcurrent int, m *metrics.Metrics) *Checker {
@@ -66,6 +77,7 @@ func (c *Checker) check(ctx context.Context) {
 
 func (c *Checker) checkOne(ctx context.Context, target Target) {
 	b := target.Backend
+	wasHealthy := b.Healthy.Load()
 	u := *b.URL
 	hp, err := url.Parse(b.HealthPath)
 	if err == nil {
@@ -81,9 +93,13 @@ func (c *Checker) checkOne(ctx context.Context, target Target) {
 		}
 	}
 	b.MarkHealth(ok, c.failureThreshold, c.successThreshold)
+	isHealthy := b.Healthy.Load()
+	if wasHealthy != isHealthy && c.onTransition != nil {
+		c.onTransition(Transition{Route: target.Route, Backend: b.URL.Host, Healthy: isHealthy})
+	}
 	if c.metrics != nil {
 		v := 0.0
-		if b.Healthy.Load() {
+		if isHealthy {
 			v = 1
 		}
 		c.metrics.SetHealthy(target.Route, b.URL.Host, v)

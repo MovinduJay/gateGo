@@ -34,6 +34,8 @@ func TestHealthThresholdsAndMetrics(t *testing.T) {
 	backend := lb.Backends()[0]
 	m := metrics.New()
 	checker := New(nil, time.Second, time.Second, 2, 1, 2, m)
+	transitions := make(chan Transition, 2)
+	checker.SetTransitionHandler(func(transition Transition) { transitions <- transition })
 	target := Target{Route: "api", Backend: backend}
 
 	checker.checkOne(context.Background(), target)
@@ -48,6 +50,11 @@ func TestHealthThresholdsAndMetrics(t *testing.T) {
 	checker.checkOne(context.Background(), target)
 	if !backend.Healthy.Load() {
 		t.Fatal("successful check should restore backend health")
+	}
+	first := <-transitions
+	second := <-transitions
+	if first.Healthy || !second.Healthy || first.Backend != backend.URL.Host || second.Route != "api" {
+		t.Fatalf("unexpected transitions: %+v %+v", first, second)
 	}
 
 	rr := httptest.NewRecorder()
