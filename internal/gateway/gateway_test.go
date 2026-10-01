@@ -228,6 +228,46 @@ func TestMaintenanceModeWithdrawsReadinessAndRejectsTraffic(t *testing.T) {
 	}
 }
 
+func TestMaintenanceWaitsForInflightDrainWithBound(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	cfg, err := config.Parse([]byte(`{"routes":[{"name":"api","path_prefix":"/api","backends":[{"url":"` + backend.URL + `"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		gw.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://gateway/api/work", nil))
+	}()
+	<-started
+	maintenance := func(wait string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "http://gateway/admin/maintenance?wait="+wait, nil)
+		req.Header.Set("X-Admin-Key", "admin")
+		rr := httptest.NewRecorder()
+		gw.ServeHTTP(rr, req)
+		return rr
+	}
+	if rr := maintenance("20ms"); rr.Code != http.StatusAccepted || !strings.Contains(rr.Body.String(), `"in_flight":1`) {
+		t.Fatalf("bounded drain = %d %s", rr.Code, rr.Body.String())
+	}
+	close(release)
+	<-done
+	if rr := maintenance("1s"); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"drained":true`) {
+		t.Fatalf("completed drain = %d %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestAdminEventsAreAuthenticatedFilteredAndBounded(t *testing.T) {
 	cfg, err := config.Parse([]byte(`{"routes":[{"name":"api","backends":[{"url":"http://backend"}]}]}`))
 	if err != nil {

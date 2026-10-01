@@ -172,6 +172,8 @@ Invoke-WebRequest -Method Delete -Headers @{"X-Admin-Key"="dev-admin-key"} "http
 
 An entire gateway replica can be withdrawn for deployment with `POST /admin/maintenance`. While enabled, `/readyz` returns `503` and new data-plane requests receive `503` plus `Retry-After`, but `/healthz` and authenticated administration remain available. `GET` reports state and `DELETE` resumes traffic.
 
+`POST /admin/maintenance?wait=10s` additionally waits for admitted requests to finish. It returns `200` when fully drained or `202` with the remaining in-flight count when the bounded wait expires, enabling safe deployment automation without an unbounded admin call.
+
 ## Verification
 
 ```powershell

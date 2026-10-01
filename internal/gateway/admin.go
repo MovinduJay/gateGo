@@ -1,10 +1,12 @@
 package gateway
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/example/gatego/internal/config"
 	"github.com/example/gatego/internal/eventlog"
@@ -79,10 +81,30 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 		if !g.requireAdmin(w, r) {
 			return true
 		}
+		var drainWait time.Duration
+		if r.Method == http.MethodPost {
+			if rawWait := r.URL.Query().Get("wait"); rawWait != "" {
+				wait, err := time.ParseDuration(rawWait)
+				if err != nil || wait <= 0 || wait > 30*time.Second {
+					g.respondJSON(w, http.StatusBadRequest, map[string]any{"error": "wait must be greater than zero and at most 30s"})
+					return true
+				}
+				drainWait = wait
+			}
+		}
 		if r.Method == http.MethodPost {
 			g.maintenance.Store(true)
 			g.events.Add(eventlog.Event{Type: "maintenance", Details: map[string]any{"enabled": true, "peer": r.RemoteAddr}})
 			g.logger.Warn("maintenance mode enabled", "peer", r.RemoteAddr)
+			if drainWait > 0 {
+				drained, remaining := g.waitForDrain(r.Context(), drainWait)
+				if !drained {
+					g.respondJSON(w, http.StatusAccepted, map[string]any{"maintenance": true, "drained": false, "in_flight": remaining})
+					return true
+				}
+				g.respondJSON(w, http.StatusOK, map[string]any{"maintenance": true, "drained": true, "in_flight": 0})
+				return true
+			}
 		} else if r.Method == http.MethodDelete {
 			g.maintenance.Store(false)
 			g.events.Add(eventlog.Event{Type: "maintenance", Details: map[string]any{"enabled": false, "peer": r.RemoteAddr}})
@@ -300,4 +322,32 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	return false
+}
+
+func (g *Gateway) waitForDrain(ctx context.Context, timeout time.Duration) (bool, int) {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		remaining := g.inFlightRequests()
+		if remaining == 0 {
+			return true, 0
+		}
+		select {
+		case <-ctx.Done():
+			return false, remaining
+		case <-deadline.C:
+			return false, g.inFlightRequests()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (g *Gateway) inFlightRequests() int {
+	total := 0
+	for _, route := range g.routes.Load().Routes {
+		total += len(route.requestSlots)
+	}
+	return total
 }
