@@ -93,6 +93,19 @@ Candidate releases can be evaluated with bounded shadow traffic:
 
 Only retry-safe requests are copied. Shadow calls run asynchronously behind their own concurrency limit and cannot change the primary response, consume retry capacity, or affect backend circuits.
 
+Public read-heavy routes can enable a bounded in-memory response cache:
+
+```json
+"cache": {
+  "enabled": true,
+  "ttl": "30s",
+  "max_entries": 1000,
+  "max_body_bytes": 1048576
+}
+```
+
+The cache stores successful `GET` responses by path and query string. Requests carrying credentials, cookies, ranges, or cache-bypass directives skip it; responses marked `private`, `no-store`, `Vary`, or `Set-Cookie` are never stored. Caching is intentionally rejected on authenticated routes. Responses expose `X-GateGo-Cache: HIT|MISS` and `Age`; Prometheus reports hit, miss, and store counts through `gatego_cache_requests_total`. Each replica maintains its own bounded cache, which can be cleared with authenticated `POST /admin/cache/purge` or `POST /admin/cache/purge?route=<name>`.
+
 ## Run locally
 
 Start three demo backends, then GateGo with the local configuration:
