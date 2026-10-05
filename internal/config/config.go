@@ -80,7 +80,15 @@ type RouteConfig struct {
 	CORS                CORSConfig       `json:"cors"`
 	Headers             HeaderConfig     `json:"headers"`
 	Shadow              ShadowConfig     `json:"shadow"`
+	Cache               CacheConfig      `json:"cache"`
 	Backends            []BackendConfig  `json:"backends"`
+}
+
+type CacheConfig struct {
+	Enabled      bool     `json:"enabled"`
+	TTL          Duration `json:"ttl"`
+	MaxEntries   int      `json:"max_entries"`
+	MaxBodyBytes int64    `json:"max_body_bytes"`
 }
 
 type AuthConfig struct {
@@ -272,6 +280,17 @@ func applyDefaults(cfg *Config) {
 				r.Shadow.MaxConcurrent = 4
 			}
 		}
+		if r.Cache.Enabled {
+			if r.Cache.TTL == 0 {
+				r.Cache.TTL = Duration(30 * time.Second)
+			}
+			if r.Cache.MaxEntries == 0 {
+				r.Cache.MaxEntries = 1000
+			}
+			if r.Cache.MaxBodyBytes == 0 {
+				r.Cache.MaxBodyBytes = 1 << 20
+			}
+		}
 		for j := range r.Backends {
 			if r.Backends[j].Weight <= 0 {
 				r.Backends[j].Weight = 1
@@ -401,6 +420,14 @@ func validate(cfg *Config) error {
 			}
 			if r.Shadow.Timeout.Std() <= 0 || r.Shadow.MaxConcurrent < 1 {
 				return fmt.Errorf("route %q shadow timeout and max_concurrent must be positive", r.Name)
+			}
+		}
+		if r.Cache.Enabled {
+			if r.Auth.Mode != "none" {
+				return fmt.Errorf("route %q response cache requires auth mode none", r.Name)
+			}
+			if r.Cache.TTL.Std() <= 0 || r.Cache.MaxEntries < 1 || r.Cache.MaxBodyBytes < 1 {
+				return fmt.Errorf("route %q cache ttl, max_entries, and max_body_bytes must be positive", r.Name)
 			}
 		}
 		backends := map[string]struct{}{}
