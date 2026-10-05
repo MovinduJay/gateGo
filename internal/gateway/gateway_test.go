@@ -62,6 +62,109 @@ func TestRetryFailsOverToSecondBackend(t *testing.T) {
 	}
 }
 
+func TestResponseCacheHitAndAdminPurge(t *testing.T) {
+	backendCalls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		backendCalls++
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("response"))
+	}))
+	defer backend.Close()
+	cfg, err := config.Parse([]byte(`{"routes":[{"name":"api","path_prefix":"/api","cache":{"enabled":true,"ttl":"1m","max_entries":10,"max_body_bytes":1024},"backends":[{"url":"` + backend.URL + `"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := metrics.New()
+	gw, err := New("", cfg, "secret", "admin", nil, m, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func() *httptest.ResponseRecorder {
+		rr := httptest.NewRecorder()
+		gw.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "http://gateway/api/item?view=full", nil))
+		return rr
+	}
+	if rr := request(); rr.Code != http.StatusOK || rr.Header().Get("X-GateGo-Cache") != "MISS" {
+		t.Fatalf("first response = %d cache=%q body=%q", rr.Code, rr.Header().Get("X-GateGo-Cache"), rr.Body.String())
+	}
+	if rr := request(); rr.Code != http.StatusOK || rr.Header().Get("X-GateGo-Cache") != "HIT" || rr.Body.String() != "response" {
+		t.Fatalf("cached response = %d cache=%q body=%q", rr.Code, rr.Header().Get("X-GateGo-Cache"), rr.Body.String())
+	}
+	if backendCalls != 1 {
+		t.Fatalf("backend calls = %d, want 1", backendCalls)
+	}
+	unauthorized := httptest.NewRecorder()
+	gw.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "http://gateway/admin/cache/purge?route=api", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized purge = %d, want 401", unauthorized.Code)
+	}
+	purge := httptest.NewRequest(http.MethodPost, "http://gateway/admin/cache/purge?route=api", nil)
+	purge.Header.Set("X-Admin-Key", "admin")
+	purgeRR := httptest.NewRecorder()
+	gw.ServeHTTP(purgeRR, purge)
+	if purgeRR.Code != http.StatusOK || !strings.Contains(purgeRR.Body.String(), `"entries":1`) {
+		t.Fatalf("purge = %d %s", purgeRR.Code, purgeRR.Body.String())
+	}
+	request()
+	if backendCalls != 2 {
+		t.Fatalf("backend calls after purge = %d, want 2", backendCalls)
+	}
+	metricsRR := httptest.NewRecorder()
+	m.ServeHTTP(metricsRR, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(metricsRR.Body.String(), `gatego_cache_requests_total{route="api",result="hit"} 1`) {
+		t.Fatalf("cache hit metric missing: %s", metricsRR.Body.String())
+	}
+}
+
+func TestResponseCacheSkipsPrivateResponses(t *testing.T) {
+	calls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Cache-Control", "private, max-age=60")
+		_, _ = w.Write([]byte("private"))
+	}))
+	defer backend.Close()
+	cfg, err := config.Parse([]byte(`{"routes":[{"name":"api","cache":{"enabled":true},"backends":[{"url":"` + backend.URL + `"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		gw.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://gateway/item", nil))
+	}
+	if calls != 2 {
+		t.Fatalf("private response was cached; calls=%d", calls)
+	}
+}
+
+func TestResponseCacheBypassesCredentialedRequest(t *testing.T) {
+	calls := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		_, _ = w.Write([]byte("public"))
+	}))
+	defer backend.Close()
+	cfg, err := config.Parse([]byte(`{"routes":[{"name":"api","cache":{"enabled":true},"backends":[{"url":"` + backend.URL + `"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		req := httptest.NewRequest(http.MethodGet, "http://gateway/item", nil)
+		req.Header.Set("Cookie", "session=private")
+		gw.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	if calls != 2 {
+		t.Fatalf("credentialed request used cache; calls=%d", calls)
+	}
+}
+
 func TestCircuitAwareReadinessAndAdminReset(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer backend.Close()

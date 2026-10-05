@@ -31,6 +31,7 @@ import (
 	"github.com/example/gatego/internal/metrics"
 	"github.com/example/gatego/internal/observability"
 	"github.com/example/gatego/internal/ratelimit"
+	"github.com/example/gatego/internal/responsecache"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -43,6 +44,7 @@ type Route struct {
 	denyCIDRs    []*net.IPNet
 	shadowSlots  chan struct{}
 	apiKey       []byte
+	cache        *responsecache.Cache
 }
 
 type routeSet struct {
@@ -128,12 +130,17 @@ func buildRouteSet(cfg *config.Config) (*routeSet, error) {
 			}
 			apiKey = []byte(secret)
 		}
+		var responseCache *responsecache.Cache
+		if rc.Cache.Enabled {
+			responseCache = responsecache.New(rc.Cache.MaxEntries)
+		}
 		set.Routes = append(set.Routes, &Route{
 			Config: rc, Balancer: lb,
 			retrySlots: make(chan struct{}, rc.Resilience.MaxConcurrentRetries), requestSlots: make(chan struct{}, rc.Resilience.MaxConcurrentRequests),
 			allowCIDRs: parseCIDRs(rc.Access.AllowCIDRs), denyCIDRs: parseCIDRs(rc.Access.DenyCIDRs),
 			shadowSlots: makeShadowSlots(rc.Shadow),
 			apiKey:      apiKey,
+			cache:       responseCache,
 		})
 	}
 	return set, nil
@@ -401,6 +408,26 @@ func retryAfterSeconds(delay time.Duration) int {
 }
 
 func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request, route *Route, started time.Time) {
+	cacheKey := r.URL.EscapedPath()
+	if r.URL.RawQuery != "" {
+		cacheKey += "?" + r.URL.RawQuery
+	}
+	cacheRequest := route.cache != nil && cacheRequestAllowed(r)
+	if cacheRequest {
+		if entry, ok := route.cache.Get(cacheKey); ok {
+			copyHeaders(w.Header(), entry.Header)
+			w.Header().Set("Age", strconv.Itoa(int(time.Since(entry.StoredAt)/time.Second)))
+			w.Header().Set("X-GateGo-Cache", "HIT")
+			g.metrics.IncCacheRequest(route.Config.Name, "hit")
+			w.WriteHeader(entry.Status)
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(entry.Body)
+			}
+			g.record(route.Config.Name, "cache", entry.Status, started)
+			return
+		}
+		g.metrics.IncCacheRequest(route.Config.Name, "miss")
+	}
 	requestContext := r.Context()
 	if totalTimeout := route.Config.Resilience.TotalTimeout.Std(); totalTimeout > 0 {
 		var cancel context.CancelFunc
@@ -538,8 +565,33 @@ attempts:
 		applyResponseHeaderPolicy(w.Header(), route.Config.Headers)
 		applyCORSHeaders(w.Header(), route.Config.CORS, r.Header.Get("Origin"))
 		w.Header().Set("X-GateGo-Backend", backendName)
+		var responseBody []byte
+		cacheable := cacheRequest && r.Method == http.MethodGet && resp.StatusCode >= 200 && resp.StatusCode < 300 &&
+			resp.ContentLength <= route.Config.Cache.MaxBodyBytes && cacheControlAllowsStorage(resp.Header) &&
+			resp.Header.Get("Set-Cookie") == "" && resp.Header.Get("Vary") == ""
+		if cacheable {
+			responseBody, err = io.ReadAll(io.LimitReader(resp.Body, route.Config.Cache.MaxBodyBytes+1))
+			if err != nil || int64(len(responseBody)) > route.Config.Cache.MaxBodyBytes {
+				cacheable = false
+			}
+		}
+		if route.cache != nil {
+			w.Header().Set("X-GateGo-Cache", "MISS")
+		}
 		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
+		if cacheable {
+			_, _ = w.Write(responseBody)
+			stored := time.Now()
+			header := w.Header().Clone()
+			header.Del("X-GateGo-Backend")
+			header.Del("X-GateGo-Cache")
+			route.cache.Set(cacheKey, responsecache.Entry{Status: resp.StatusCode, Header: header, Body: responseBody, StoredAt: stored, ExpiresAt: stored.Add(route.Config.Cache.TTL.Std())})
+			g.metrics.IncCacheRequest(route.Config.Name, "store")
+		} else if responseBody != nil {
+			_, _ = w.Write(responseBody)
+		} else {
+			_, _ = io.Copy(w, resp.Body)
+		}
 		resp.Body.Close()
 		backend.Release()
 		releaseRetry()
@@ -551,6 +603,22 @@ attempts:
 	status, message := upstreamFailureResponse(lastErr)
 	g.record(route.Config.Name, "", status, started)
 	g.respondJSON(w, status, map[string]any{"error": message})
+}
+
+func cacheControlAllowsStorage(header http.Header) bool {
+	value := strings.ToLower(header.Get("Cache-Control"))
+	return !strings.Contains(value, "no-store") && !strings.Contains(value, "private")
+}
+
+func cacheRequestAllowed(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	if r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" || r.Header.Get("Range") != "" {
+		return false
+	}
+	control := strings.ToLower(r.Header.Get("Cache-Control"))
+	return !strings.Contains(control, "no-cache") && !strings.Contains(control, "no-store")
 }
 
 func (g *Gateway) serveWebSocket(w http.ResponseWriter, r *http.Request, route *Route, started time.Time) {

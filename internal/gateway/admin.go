@@ -320,6 +320,33 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 		g.events.Add(eventlog.Event{Type: "circuit_reset", Route: routeName, Backend: backendName, Details: map[string]any{"count": reset, "peer": r.RemoteAddr}})
 		g.respondJSON(w, http.StatusOK, map[string]any{"status": "reset", "count": reset})
 		return true
+	case "/admin/cache/purge":
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "POST required"})
+			return true
+		}
+		if !g.requireAdmin(w, r) {
+			return true
+		}
+		routeName := strings.TrimSpace(r.URL.Query().Get("route"))
+		purged, matched := 0, 0
+		for _, route := range g.routes.Load().Routes {
+			if routeName != "" && route.Config.Name != routeName {
+				continue
+			}
+			if route.cache != nil {
+				matched++
+				purged += route.cache.Purge()
+			}
+		}
+		if routeName != "" && matched == 0 {
+			g.respondJSON(w, http.StatusNotFound, map[string]any{"error": "cache-enabled route not found"})
+			return true
+		}
+		g.events.Add(eventlog.Event{Type: "cache_purge", Route: routeName, Details: map[string]any{"entries": purged, "peer": r.RemoteAddr}})
+		g.respondJSON(w, http.StatusOK, map[string]any{"status": "purged", "entries": purged})
+		return true
 	}
 	return false
 }

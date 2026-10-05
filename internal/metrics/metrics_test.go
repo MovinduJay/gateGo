@@ -23,6 +23,7 @@ func TestContainmentMetricsAreExposed(t *testing.T) {
 	m.SetRateLimitBackend("redis")
 	m.IncRateLimitFallback()
 	m.IncHealthTransition("api", "backend-b", "unhealthy")
+	m.IncCacheRequest("api", "hit")
 	rr := httptest.NewRecorder()
 	m.ServeHTTP(rr, httptest.NewRequest("GET", "/metrics", nil))
 	body := rr.Body.String()
@@ -43,6 +44,7 @@ func TestContainmentMetricsAreExposed(t *testing.T) {
 		`gatego_rate_limit_backend{backend="local"} 0`,
 		`gatego_rate_limit_fallbacks_total 1`,
 		`gatego_backend_health_transitions_total{route="api",backend="backend-b",state="unhealthy"} 1`,
+		`gatego_cache_requests_total{route="api",result="hit"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metric %q missing from:\n%s", want, body)
