@@ -67,6 +67,7 @@ func TestResponseCacheHitAndAdminPurge(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		backendCalls++
 		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("ETag", `"version-1"`)
 		_, _ = w.Write([]byte("response"))
 	}))
 	defer backend.Close()
@@ -93,6 +94,16 @@ func TestResponseCacheHitAndAdminPurge(t *testing.T) {
 	if backendCalls != 1 {
 		t.Fatalf("backend calls = %d, want 1", backendCalls)
 	}
+	conditional := httptest.NewRequest(http.MethodGet, "http://gateway/api/item?view=full", nil)
+	conditional.Header.Set("If-None-Match", `W/"version-1"`)
+	conditionalRR := httptest.NewRecorder()
+	gw.ServeHTTP(conditionalRR, conditional)
+	if conditionalRR.Code != http.StatusNotModified || conditionalRR.Body.Len() != 0 || conditionalRR.Header().Get("X-GateGo-Cache") != "HIT" {
+		t.Fatalf("conditional cache response = %d cache=%q body=%q", conditionalRR.Code, conditionalRR.Header().Get("X-GateGo-Cache"), conditionalRR.Body.String())
+	}
+	if backendCalls != 1 {
+		t.Fatalf("conditional request reached backend; calls=%d", backendCalls)
+	}
 	unauthorized := httptest.NewRecorder()
 	gw.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "http://gateway/admin/cache/purge?route=api", nil))
 	if unauthorized.Code != http.StatusUnauthorized {
@@ -111,7 +122,7 @@ func TestResponseCacheHitAndAdminPurge(t *testing.T) {
 	}
 	metricsRR := httptest.NewRecorder()
 	m.ServeHTTP(metricsRR, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	if !strings.Contains(metricsRR.Body.String(), `gatego_cache_requests_total{route="api",result="hit"} 1`) {
+	if !strings.Contains(metricsRR.Body.String(), `gatego_cache_requests_total{route="api",result="hit"} 2`) {
 		t.Fatalf("cache hit metric missing: %s", metricsRR.Body.String())
 	}
 }

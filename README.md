@@ -104,7 +104,15 @@ Public read-heavy routes can enable a bounded in-memory response cache:
 }
 ```
 
-The cache stores successful `GET` responses by path and query string. Requests carrying credentials, cookies, ranges, or cache-bypass directives skip it; responses marked `private`, `no-store`, `Vary`, or `Set-Cookie` are never stored. Caching is intentionally rejected on authenticated routes. Responses expose `X-GateGo-Cache: HIT|MISS` and `Age`; Prometheus reports hit, miss, and store counts through `gatego_cache_requests_total`. Each replica maintains its own bounded cache, which can be cleared with authenticated `POST /admin/cache/purge` or `POST /admin/cache/purge?route=<name>`.
+The cache stores successful `GET` responses by path and query string. Requests carrying credentials, cookies, ranges, or cache-bypass directives skip it; responses marked `private`, `no-store`, `Vary`, or `Set-Cookie` are never stored. Upstream `s-maxage` and `max-age` values shorten (but cannot extend) the configured TTL. Cached ETags support `If-None-Match` and return `304` without contacting the backend. Caching is intentionally rejected on authenticated routes.
+
+Responses expose `X-GateGo-Cache: HIT|MISS|BYPASS` and `Age`; Prometheus reports cache decisions through `gatego_cache_requests_total`. Authenticated `GET /admin/cache` reports occupancy and limits for each cache-enabled route. Each replica maintains its own bounded cache, which can be cleared globally or selectively:
+
+```text
+POST /admin/cache/purge
+POST /admin/cache/purge?route=<name>
+POST /admin/cache/purge?route=<name>&path_prefix=/products/
+```
 
 ## Run locally
 

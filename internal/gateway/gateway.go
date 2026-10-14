@@ -423,6 +423,12 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request, route *Route
 			w.Header().Set("Age", strconv.Itoa(int(time.Since(entry.StoredAt)/time.Second)))
 			w.Header().Set("X-GateGo-Cache", "HIT")
 			g.metrics.IncCacheRequest(route.Config.Name, "hit")
+			if etagMatches(r.Header.Get("If-None-Match"), entry.Header.Get("ETag")) {
+				w.Header().Del("Content-Length")
+				w.WriteHeader(http.StatusNotModified)
+				g.record(route.Config.Name, "cache", http.StatusNotModified, started)
+				return
+			}
 			w.WriteHeader(entry.Status)
 			if r.Method != http.MethodHead {
 				_, _ = w.Write(entry.Body)
@@ -647,6 +653,22 @@ func cacheRequestAllowed(r *http.Request) bool {
 	}
 	control := strings.ToLower(r.Header.Get("Cache-Control"))
 	return !strings.Contains(control, "no-cache") && !strings.Contains(control, "no-store")
+}
+
+func etagMatches(condition, current string) bool {
+	if condition == "" || current == "" {
+		return false
+	}
+	normalize := func(value string) string {
+		return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), "W/"))
+	}
+	current = normalize(current)
+	for _, candidate := range strings.Split(condition, ",") {
+		if strings.TrimSpace(candidate) == "*" || normalize(candidate) == current {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Gateway) serveWebSocket(w http.ResponseWriter, r *http.Request, route *Route, started time.Time) {
