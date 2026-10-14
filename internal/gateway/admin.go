@@ -347,6 +347,30 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 		g.events.Add(eventlog.Event{Type: "cache_purge", Route: routeName, Details: map[string]any{"entries": purged, "peer": r.RemoteAddr}})
 		g.respondJSON(w, http.StatusOK, map[string]any{"status": "purged", "entries": purged})
 		return true
+	case "/admin/cache":
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			g.respondJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "GET required"})
+			return true
+		}
+		if !g.requireAdmin(w, r) {
+			return true
+		}
+		type cacheState struct {
+			Route    string `json:"route"`
+			Entries  int    `json:"entries"`
+			Capacity int    `json:"capacity"`
+			TTLMS    int64  `json:"ttl_ms"`
+			MaxBodyB int64  `json:"max_body_bytes"`
+		}
+		states := []cacheState{}
+		for _, route := range g.routes.Load().Routes {
+			if route.cache != nil {
+				states = append(states, cacheState{Route: route.Config.Name, Entries: route.cache.Len(), Capacity: route.cache.Capacity(), TTLMS: route.Config.Cache.TTL.Std().Milliseconds(), MaxBodyB: route.Config.Cache.MaxBodyBytes})
+			}
+		}
+		g.respondJSON(w, http.StatusOK, states)
+		return true
 	}
 	return false
 }

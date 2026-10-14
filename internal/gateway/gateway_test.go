@@ -165,6 +165,27 @@ func TestResponseCacheBypassesCredentialedRequest(t *testing.T) {
 	}
 }
 
+func TestAdminCacheDiagnostics(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("cached")) }))
+	defer backend.Close()
+	cfg, err := config.Parse([]byte(`{"routes":[{"name":"api","cache":{"enabled":true,"ttl":"45s","max_entries":12,"max_body_bytes":2048},"backends":[{"url":"` + backend.URL + `"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw, err := New("", cfg, "secret", "admin", nil, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://gateway/item", nil))
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/admin/cache", nil)
+	req.Header.Set("X-Admin-Key", "admin")
+	rr := httptest.NewRecorder()
+	gw.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"entries":1`) || !strings.Contains(rr.Body.String(), `"capacity":12`) || !strings.Contains(rr.Body.String(), `"ttl_ms":45000`) {
+		t.Fatalf("cache diagnostics = %d %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestCircuitAwareReadinessAndAdminReset(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer backend.Close()

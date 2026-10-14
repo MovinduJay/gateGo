@@ -75,3 +75,5 @@ func (c *Cache) Len() int {
 	defer c.mu.Unlock()
 	return len(c.entries)
 }
+
+func (c *Cache) Capacity() int { return c.maxEntries }
