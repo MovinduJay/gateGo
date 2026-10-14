@@ -330,6 +330,11 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 		routeName := strings.TrimSpace(r.URL.Query().Get("route"))
+		pathPrefix := strings.TrimSpace(r.URL.Query().Get("path_prefix"))
+		if pathPrefix != "" && !strings.HasPrefix(pathPrefix, "/") {
+			g.respondJSON(w, http.StatusBadRequest, map[string]any{"error": "path_prefix must start with /"})
+			return true
+		}
 		purged, matched := 0, 0
 		for _, route := range g.routes.Load().Routes {
 			if routeName != "" && route.Config.Name != routeName {
@@ -337,14 +342,18 @@ func (g *Gateway) handleControl(w http.ResponseWriter, r *http.Request) bool {
 			}
 			if route.cache != nil {
 				matched++
-				purged += route.cache.Purge()
+				if pathPrefix != "" {
+					purged += route.cache.PurgePrefix(pathPrefix)
+				} else {
+					purged += route.cache.Purge()
+				}
 			}
 		}
 		if routeName != "" && matched == 0 {
 			g.respondJSON(w, http.StatusNotFound, map[string]any{"error": "cache-enabled route not found"})
 			return true
 		}
-		g.events.Add(eventlog.Event{Type: "cache_purge", Route: routeName, Details: map[string]any{"entries": purged, "peer": r.RemoteAddr}})
+		g.events.Add(eventlog.Event{Type: "cache_purge", Route: routeName, Details: map[string]any{"entries": purged, "path_prefix": pathPrefix, "peer": r.RemoteAddr}})
 		g.respondJSON(w, http.StatusOK, map[string]any{"status": "purged", "entries": purged})
 		return true
 	case "/admin/cache":

@@ -2,6 +2,7 @@ package responsecache
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -67,6 +68,23 @@ func (c *Cache) Purge() int {
 	defer c.mu.Unlock()
 	count := len(c.entries)
 	c.entries = make(map[string]Entry)
+	return count
+}
+
+func (c *Cache) PurgePrefix(prefix string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	count := 0
+	for key := range c.entries {
+		path := key
+		if query := strings.IndexByte(path, '?'); query >= 0 {
+			path = path[:query]
+		}
+		if strings.HasPrefix(path, prefix) {
+			delete(c.entries, key)
+			count++
+		}
+	}
 	return count
 }
 

@@ -42,3 +42,20 @@ func TestCacheCopiesMutableValues(t *testing.T) {
 		t.Fatalf("cached values were mutated: body=%q header=%q", got.Body, got.Header.Get("X-Test"))
 	}
 }
+
+func TestPurgePrefixIgnoresQueryAndPreservesOtherPaths(t *testing.T) {
+	cache := New(3)
+	now := time.Now()
+	for _, key := range []string{"/products/1?lang=en", "/products/2", "/users/1"} {
+		cache.Set(key, Entry{Status: 200, StoredAt: now, ExpiresAt: now.Add(time.Minute)})
+	}
+	if purged := cache.PurgePrefix("/products/"); purged != 2 {
+		t.Fatalf("purged = %d, want 2", purged)
+	}
+	if cache.Len() != 1 {
+		t.Fatalf("entries after selective purge = %d, want 1", cache.Len())
+	}
+	if _, ok := cache.Get("/users/1"); !ok {
+		t.Fatal("unrelated cache entry was purged")
+	}
+}
