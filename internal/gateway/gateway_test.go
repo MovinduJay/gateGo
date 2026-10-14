@@ -195,6 +195,21 @@ func TestAdminCacheDiagnostics(t *testing.T) {
 	}
 }
 
+func TestResponseCacheTTLHonorsSharedMaxAge(t *testing.T) {
+	header := http.Header{"Cache-Control": []string{"public, max-age=30, s-maxage=5"}}
+	if got := responseCacheTTL(header, time.Minute); got != 5*time.Second {
+		t.Fatalf("TTL = %s, want 5s", got)
+	}
+	header.Set("Cache-Control", "max-age=120")
+	if got := responseCacheTTL(header, time.Minute); got != time.Minute {
+		t.Fatalf("capped TTL = %s, want 1m", got)
+	}
+	header.Set("Cache-Control", "max-age=0")
+	if got := responseCacheTTL(header, time.Minute); got != 0 {
+		t.Fatalf("zero TTL = %s, want 0", got)
+	}
+}
+
 func TestCircuitAwareReadinessAndAdminReset(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer backend.Close()

@@ -573,6 +573,8 @@ attempts:
 		cacheable := cacheRequest && r.Method == http.MethodGet && resp.StatusCode >= 200 && resp.StatusCode < 300 &&
 			resp.ContentLength <= route.Config.Cache.MaxBodyBytes && cacheControlAllowsStorage(resp.Header) &&
 			resp.Header.Get("Set-Cookie") == "" && resp.Header.Get("Vary") == ""
+		cacheTTL := responseCacheTTL(resp.Header, route.Config.Cache.TTL.Std())
+		cacheable = cacheable && cacheTTL > 0
 		if cacheable {
 			responseBody, err = io.ReadAll(io.LimitReader(resp.Body, route.Config.Cache.MaxBodyBytes+1))
 			if err != nil || int64(len(responseBody)) > route.Config.Cache.MaxBodyBytes {
@@ -589,7 +591,7 @@ attempts:
 			header := w.Header().Clone()
 			header.Del("X-GateGo-Backend")
 			header.Del("X-GateGo-Cache")
-			route.cache.Set(cacheKey, responsecache.Entry{Status: resp.StatusCode, Header: header, Body: responseBody, StoredAt: stored, ExpiresAt: stored.Add(route.Config.Cache.TTL.Std())})
+			route.cache.Set(cacheKey, responsecache.Entry{Status: resp.StatusCode, Header: header, Body: responseBody, StoredAt: stored, ExpiresAt: stored.Add(cacheTTL)})
 			g.metrics.IncCacheRequest(route.Config.Name, "store")
 		} else if responseBody != nil {
 			_, _ = w.Write(responseBody)
@@ -612,6 +614,28 @@ attempts:
 func cacheControlAllowsStorage(header http.Header) bool {
 	value := strings.ToLower(header.Get("Cache-Control"))
 	return !strings.Contains(value, "no-store") && !strings.Contains(value, "private")
+}
+
+func responseCacheTTL(header http.Header, configured time.Duration) time.Duration {
+	directives := strings.Split(strings.ToLower(header.Get("Cache-Control")), ",")
+	for _, preferred := range []string{"s-maxage", "max-age"} {
+		for _, directive := range directives {
+			name, value, found := strings.Cut(strings.TrimSpace(directive), "=")
+			if !found || name != preferred {
+				continue
+			}
+			seconds, err := strconv.ParseInt(strings.Trim(value, `"`), 10, 64)
+			if err != nil || seconds < 0 {
+				continue
+			}
+			upstream := time.Duration(seconds) * time.Second
+			if upstream < configured {
+				return upstream
+			}
+			return configured
+		}
+	}
+	return configured
 }
 
 func cacheRequestAllowed(r *http.Request) bool {
