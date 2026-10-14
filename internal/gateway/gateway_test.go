@@ -158,10 +158,19 @@ func TestResponseCacheBypassesCredentialedRequest(t *testing.T) {
 	for range 2 {
 		req := httptest.NewRequest(http.MethodGet, "http://gateway/item", nil)
 		req.Header.Set("Cookie", "session=private")
-		gw.ServeHTTP(httptest.NewRecorder(), req)
+		rr := httptest.NewRecorder()
+		gw.ServeHTTP(rr, req)
+		if rr.Header().Get("X-GateGo-Cache") != "BYPASS" {
+			t.Fatalf("cache status = %q, want BYPASS", rr.Header().Get("X-GateGo-Cache"))
+		}
 	}
 	if calls != 2 {
 		t.Fatalf("credentialed request used cache; calls=%d", calls)
+	}
+	metricsRR := httptest.NewRecorder()
+	gw.metrics.ServeHTTP(metricsRR, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(metricsRR.Body.String(), `gatego_cache_requests_total{route="api",result="bypass"} 2`) {
+		t.Fatalf("cache bypass metric missing: %s", metricsRR.Body.String())
 	}
 }
 

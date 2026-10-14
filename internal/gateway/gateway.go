@@ -413,6 +413,10 @@ func (g *Gateway) serveHTTP(w http.ResponseWriter, r *http.Request, route *Route
 		cacheKey += "?" + r.URL.RawQuery
 	}
 	cacheRequest := route.cache != nil && cacheRequestAllowed(r)
+	if route.cache != nil && !cacheRequest {
+		w.Header().Set("X-GateGo-Cache", "BYPASS")
+		g.metrics.IncCacheRequest(route.Config.Name, "bypass")
+	}
 	if cacheRequest {
 		if entry, ok := route.cache.Get(cacheKey); ok {
 			copyHeaders(w.Header(), entry.Header)
@@ -575,7 +579,7 @@ attempts:
 				cacheable = false
 			}
 		}
-		if route.cache != nil {
+		if cacheRequest {
 			w.Header().Set("X-GateGo-Cache", "MISS")
 		}
 		w.WriteHeader(resp.StatusCode)
